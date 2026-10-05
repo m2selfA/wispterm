@@ -273,6 +273,7 @@ pub fn init(allocator: std.mem.Allocator, app: *App) !AppWindow {
     link_open.current_mode = app.url_open_mode;
     g_ssh_legacy_algorithms = app.ssh_legacy_algorithms;
     tab.g_ssh_legacy_algorithms = app.ssh_legacy_algorithms;
+    tab.g_ssh_terminal_capabilities = app.ssh_advertise_terminal_capabilities;
     g_weixin_notify_forward = app.weixin_notify_forward;
     overlays.g_split_divider_color = app.split_divider_color;
 
@@ -5904,6 +5905,7 @@ fn applyReloadedConfig(allocator: std.mem.Allocator, cfg: *const Config) void {
     // Update App's cached config so new windows get the new settings
     if (g_app) |app| {
         app.updateConfig(cfg);
+        tab.g_ssh_terminal_capabilities = app.ssh_advertise_terminal_capabilities;
     }
     syncDefaultShellCommandFromConfig(cfg.shell);
     ai_chat.configureAgent(.{

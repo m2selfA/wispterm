@@ -57,6 +57,7 @@ pub const TAB_CLOSE_BTN_W: f32 = 36;
 pub const TAB_CLOSE_FADE_SPEED: f32 = 6.0;
 
 pub threadlocal var g_ssh_legacy_algorithms: bool = false;
+pub threadlocal var g_ssh_terminal_capabilities: bool = false;
 
 // ============================================================================
 // Tab model — each tab owns a SplitTree of Surfaces
@@ -454,6 +455,7 @@ fn splitSshCommand(
         .password_auth = conn.password_auth,
         .legacy_algorithms = conn.legacy_algorithms,
         .proxy_jump = conn.proxyJump(),
+        .terminal_capabilities = g_ssh_terminal_capabilities,
     }) orelse return null;
 
     return platform_pty_command.allocCommandLineFromUtf8(allocator, command) catch null;
@@ -509,6 +511,7 @@ pub fn spawnTabWithCommandAndCwd(allocator: std.mem.Allocator, cols: u16, rows: 
         cursor_style,
         cursor_blink,
         cwd,
+        g_ssh_terminal_capabilities,
     ) catch {
         std.debug.print("Failed to create Surface for new tab\n", .{});
         return false;
@@ -1367,6 +1370,7 @@ fn splitFocusedSurfaceWithCommand(
         cursor_style,
         cursor_blink,
         cwd,
+        g_ssh_terminal_capabilities,
     ) catch {
         std.debug.print("Failed to create Surface for split\n", .{});
         return null;
@@ -1977,7 +1981,7 @@ fn surfaceFromSnapImpl(
             } else null;
 
             const command = getShellCmd();
-            const surface = try Surface.init(gpa, cols, rows, command, g_scrollback_limit, cursor_style, cursor_blink, cwd_w);
+            const surface = try Surface.init(gpa, cols, rows, command, g_scrollback_limit, cursor_style, cursor_blink, cwd_w, g_ssh_terminal_capabilities);
             surface.attachRemoteClient(g_remote_client);
             return surface;
         },
@@ -1989,7 +1993,7 @@ fn surfaceFromSnapImpl(
             const port_slice = std.fmt.bufPrint(&port_buf, "{}", .{s.port}) catch return error.CommandTooLong;
             const command = try platform_pty_command.allocCommandLineFromUtf8(gpa, command_text);
             defer platform_pty_command.freeCommandLine(gpa, command);
-            const surface = try Surface.init(gpa, cols, rows, platform_pty_command.commandLineFromOwned(command), g_scrollback_limit, cursor_style, cursor_blink, null);
+            const surface = try Surface.init(gpa, cols, rows, platform_pty_command.commandLineFromOwned(command), g_scrollback_limit, cursor_style, cursor_blink, null, g_ssh_terminal_capabilities);
             surface.attachRemoteClient(g_remote_client);
             // SSH password is never persisted (security invariant I1). Restore the
             // endpoint without a password, then let the arm hook re-supply it from
@@ -2038,6 +2042,7 @@ fn buildSshRestoreCommand(
         .host = s.host,
         .port = port_slice,
         .legacy_algorithms = g_ssh_legacy_algorithms,
+        .terminal_capabilities = g_ssh_terminal_capabilities,
         .proxy_jump = s.proxy_jump,
     }) orelse return error.CommandTooLong;
     var final_len: usize = base.len;

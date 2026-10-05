@@ -21,7 +21,7 @@ const platform_agent_prompt = @import("../../platform/agent_prompt.zig");
 const oauth_client = @import("../oauth/client.zig");
 const platform_http = @import("../../platform/http_client.zig");
 const app_metadata = @import("../../app_metadata.zig");
-const Config = @import("../../config.zig");
+const http_proxy = @import("../../platform/http_proxy.zig");
 
 const title_log = std.log.scoped(.ai_title);
 
@@ -206,11 +206,15 @@ pub fn webSearchThreadMain(req: *ai_chat.WebSearchRequest) void {
     };
     defer allocator.free(key);
 
+    var route = http_proxy.loadResearch(allocator);
+    defer route.deinit(allocator);
+
     var results = web_search.executeSearch(allocator, req.query, .{
         .engine = .jina,
         .api_key = key,
         .with_content = false,
         .max_results = 10,
+        .proxy = route.explicit,
     }) catch |err| {
         const text = web_search.formatErrorText(allocator, err) catch {
             ai_chat.appendWebSearchResult(session, web_search.errorText(err));
@@ -243,8 +247,11 @@ pub fn webReadThreadMain(req: *ai_chat.WebReadRequest) void {
     defer if (key_opt) |k| allocator.free(k);
     const key = key_opt orelse "";
 
+    var route = http_proxy.loadResearch(allocator);
+    defer route.deinit(allocator);
+
     const cache_dir: ?[]const u8 = if (req.working_dir.len > 0) req.working_dir else null;
-    var result = web_read.executeRead(allocator, req.target, .{ .api_key = key, .cache_dir = cache_dir }) catch |err| {
+    var result = web_read.executeRead(allocator, req.target, .{ .api_key = key, .cache_dir = cache_dir, .proxy = route.explicit }) catch |err| {
         const text = web_read.formatErrorText(allocator, err) catch {
             ai_chat.appendWebSearchResult(session, web_read.errorText(err));
             return;
@@ -272,7 +279,10 @@ pub fn pubMedThreadMain(req: *ai_chat.WebPubMedRequest) void {
     const session = req.session;
     if (session.closing.load(.acquire)) return;
 
-    var results = pubmed.executeSearch(allocator, req.query, .{ .max_results = 10 }) catch |err| {
+    var route = http_proxy.loadResearch(allocator);
+    defer route.deinit(allocator);
+
+    var results = pubmed.executeSearch(allocator, req.query, .{ .max_results = 10, .proxy = route.explicit }) catch |err| {
         const text = pubmed.formatErrorText(allocator, err) catch {
             ai_chat.appendWebSearchResult(session, pubmed.errorText(err));
             return;
@@ -627,26 +637,6 @@ fn authFailureResult(allocator: std.mem.Allocator, err: anyerror) !ApiResult {
     };
 }
 
-const ProviderProxy = struct {
-    enabled: bool = false,
-    explicit: ?[]u8 = null,
-
-    fn deinit(self: *ProviderProxy, allocator: std.mem.Allocator) void {
-        if (self.explicit) |text| allocator.free(text);
-        self.* = .{};
-    }
-};
-
-fn loadProviderProxy(allocator: std.mem.Allocator) ProviderProxy {
-    var cfg = Config.load(allocator) catch return .{};
-    defer cfg.deinit(allocator);
-    if (!cfg.@"http-use-system-proxy") return .{};
-    const text = std.mem.trim(u8, cfg.@"http-proxy", " \t\r\n");
-    if (text.len == 0) return .{ .enabled = true };
-    const explicit = allocator.dupe(u8, text) catch return .{ .enabled = true };
-    return .{ .enabled = true, .explicit = explicit };
-}
-
 fn providerHeaders(prepared: *const PreparedCall, out: []platform_http.Header) usize {
     var n: usize = 0;
     if (n >= out.len) return n;
@@ -700,7 +690,7 @@ fn runChatRequestForMessages(request: *const ChatRequest, messages: []const Requ
     const body = try buildRequestJsonForMessages(allocator, request, messages, include_tools);
     defer allocator.free(body);
 
-    var route = loadProviderProxy(allocator);
+    var route = http_proxy.load(allocator);
     defer route.deinit(allocator);
     if (route.enabled) {
         const response = postViaProxy(allocator, endpoint, body, &prepared, route.explicit) catch |err| return networkFailureResult(allocator, endpoint, err);
@@ -770,7 +760,7 @@ fn runChatRequestStreaming(request: *const ChatRequest) !void {
     const body = try buildRequestJson(allocator, request);
     defer allocator.free(body);
 
-    var route = loadProviderProxy(allocator);
+    var route = http_proxy.load(allocator);
     defer route.deinit(allocator);
     if (route.enabled) {
         const response = postViaProxy(allocator, endpoint, body, &prepared, route.explicit) catch |err| {

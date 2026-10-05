@@ -172,6 +172,7 @@ fn agentAppDisplayName(app: agent_detector.App) []const u8 {
         .none => "terminal app",
         .codex => "Codex",
         .claude_code => "Claude Code",
+        .pi => "Pi",
         // In-app sessions never appear on a PTY surface; arm exists for exhaustiveness.
         .assistant => "Copilot",
     };
@@ -182,6 +183,8 @@ fn agentAppReplName(app: agent_detector.App) []const u8 {
         .none => "plain",
         .codex => "codex",
         .claude_code => "claude_code",
+        // Pi currently uses the generic raw-input route; its status remains authoritative via OSC 7748.
+        .pi => "plain",
         .assistant => "assistant",
     };
 }
@@ -214,6 +217,7 @@ fn commandWordApp(command: []const u8) ?agent_detector.App {
     if (std.mem.lastIndexOfAny(u8, word, "/\\")) |slash| word = word[slash + 1 ..];
     if (std.ascii.eqlIgnoreCase(word, "codex")) return .codex;
     if (std.ascii.eqlIgnoreCase(word, "claude") or std.ascii.eqlIgnoreCase(word, "claude-code")) return .claude_code;
+    if (std.ascii.eqlIgnoreCase(word, "pi")) return .pi;
     return null;
 }
 
@@ -1181,6 +1185,16 @@ test "shell exec refuses interactive Codex launcher commands" {
     try std.testing.expect(try shellExecInteractiveAgentCommandRefusal(allocator, .wsl, "which codex") == null);
     try std.testing.expect(try shellExecInteractiveAgentCommandRefusal(allocator, .wsl, "codex --version") == null);
 }
+test "shell exec refuses interactive Pi launcher commands" {
+    const allocator = std.testing.allocator;
+    const refused = (try shellExecInteractiveAgentCommandRefusal(allocator, .wsl, "pi --model default")).?;
+    defer allocator.free(refused);
+    try std.testing.expect(std.mem.indexOf(u8, refused, "Refusing to start interactive Pi") != null);
+    try std.testing.expect(std.mem.indexOf(u8, refused, "repl=plain") != null);
+
+    try std.testing.expect(try shellExecInteractiveAgentCommandRefusal(allocator, .wsl, "pi --version") == null);
+}
+
 test "shell exec refuses bare REPL launchers but allows run-and-exit invocations" {
     const allocator = std.testing.allocator;
     const bare = [_][]const u8{ "python", "python3", "ipython", "R", "node", "irb", "/usr/bin/python", "python " };

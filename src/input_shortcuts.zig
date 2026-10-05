@@ -2,6 +2,7 @@ const std = @import("std");
 const ghostty_vt = @import("ghostty-vt");
 
 const input_key = @import("input/key.zig");
+const platform_input = @import("platform/input_events.zig");
 
 /// Encode a "special" terminal key (Enter, Tab, Backspace, …) using the Kitty
 /// keyboard protocol when the running application has enabled it.
@@ -26,15 +27,47 @@ pub fn kittyKeyEncode(
     // keyboard protocol; otherwise signal the caller to keep existing behavior.
     if (opts.kitty_flags.int() == 0) return null;
 
+    return terminalKeyEncode(opts, key, mods, buf);
+}
+
+pub fn terminalKeyEncode(
+    opts: ghostty_vt.input.KeyEncodeOptions,
+    key: ghostty_vt.input.Key,
+    mods: ghostty_vt.input.KeyMods,
+    buf: []u8,
+) ?[]const u8 {
     var writer: std.Io.Writer = .fixed(buf);
     ghostty_vt.input.encodeKey(&writer, .{
         .action = .press,
         .key = key,
         .mods = mods,
     }, opts) catch return null;
-
     const encoded = writer.buffered();
     return if (encoded.len == 0) null else encoded;
+}
+
+pub fn terminalFunctionKeyEncode(
+    opts: ghostty_vt.input.KeyEncodeOptions,
+    key_code: platform_input.KeyCode,
+    mods: ghostty_vt.input.KeyMods,
+    buf: []u8,
+) ?[]const u8 {
+    const key: ghostty_vt.input.Key = switch (key_code) {
+        platform_input.key_f1 => .f1,
+        platform_input.key_f2 => .f2,
+        platform_input.key_f3 => .f3,
+        platform_input.key_f4 => .f4,
+        platform_input.key_f5 => .f5,
+        platform_input.key_f6 => .f6,
+        platform_input.key_f7 => .f7,
+        platform_input.key_f8 => .f8,
+        platform_input.key_f9 => .f9,
+        platform_input.key_f10 => .f10,
+        platform_input.key_f11 => .f11,
+        platform_input.key_f12 => .f12,
+        else => return null,
+    };
+    return terminalKeyEncode(opts, key, mods, buf);
 }
 
 pub fn terminalArrowSequence(ev: input_key.KeyEvent, cursor_keys: bool) ?[]const u8 {
@@ -130,4 +163,30 @@ test "kittyKeyEncode disambiguates Shift+Tab and Shift+Backspace when active" {
         "\x1b[127;2u",
         kittyKeyEncode(kitty_disambiguate, .backspace, .{ .shift = true }, &buf).?,
     );
+}
+
+test "terminalFunctionKeyEncode emits xterm F-key sequences" {
+    const cases = [_]struct { key: platform_input.KeyCode, expected: []const u8 }{
+        .{ .key = platform_input.key_f1, .expected = "\x1bOP" },
+        .{ .key = platform_input.key_f2, .expected = "\x1bOQ" },
+        .{ .key = platform_input.key_f3, .expected = "\x1bOR" },
+        .{ .key = platform_input.key_f4, .expected = "\x1bOS" },
+        .{ .key = platform_input.key_f5, .expected = "\x1b[15~" },
+        .{ .key = platform_input.key_f6, .expected = "\x1b[17~" },
+        .{ .key = platform_input.key_f7, .expected = "\x1b[18~" },
+        .{ .key = platform_input.key_f8, .expected = "\x1b[19~" },
+        .{ .key = platform_input.key_f9, .expected = "\x1b[20~" },
+        .{ .key = platform_input.key_f10, .expected = "\x1b[21~" },
+        .{ .key = platform_input.key_f11, .expected = "\x1b[23~" },
+        .{ .key = platform_input.key_f12, .expected = "\x1b[24~" },
+    };
+    var buf: [128]u8 = undefined;
+    for (cases) |case| {
+        try std.testing.expectEqualStrings(case.expected, terminalFunctionKeyEncode(.{}, case.key, .{}, &buf).?);
+    }
+    try std.testing.expectEqualStrings(
+        "\x1b[1;5Q",
+        terminalFunctionKeyEncode(.{}, platform_input.key_f2, .{ .ctrl = true }, &buf).?,
+    );
+    try std.testing.expect(terminalFunctionKeyEncode(.{}, platform_input.key_enter, .{}, &buf) == null);
 }

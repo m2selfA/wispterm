@@ -240,6 +240,7 @@ command: Command,
 selection: Selection,
 render_state: renderer.State,
 launch_kind: LaunchKind,
+advertise_terminal_capabilities: bool,
 ssh_connection: ?SshConnection,
 remote_client: ?*remote.Client,
 remote_id: [16]u8,
@@ -447,6 +448,7 @@ pub fn init(
     cursor_style: Config.CursorStyle,
     cursor_blink: bool,
     cwd: platform_pty_command.Cwd,
+    advertise_terminal_capabilities: bool,
 ) !*Surface {
     const surface = try allocator.create(Surface);
     errdefer allocator.destroy(surface);
@@ -482,10 +484,10 @@ pub fn init(
     errdefer surface.pty.deinit();
 
     surface.command = .{};
-    try surface.command.start(&surface.pty, shell_cmd, cwd);
+    try surface.command.start(&surface.pty, shell_cmd, cwd, advertise_terminal_capabilities);
     errdefer surface.command.deinit();
 
-    const ready = try finishInit(surface, allocator, cols, rows, platform_pty_command.launchKindForCommand(shell_cmd), cwd);
+    const ready = try finishInit(surface, allocator, cols, rows, platform_pty_command.launchKindForCommand(shell_cmd), cwd, advertise_terminal_capabilities);
     ready.setRespawnTarget(allocator, shell_cmd, cwd);
     return ready;
 }
@@ -501,12 +503,14 @@ fn finishInit(
     rows: u16,
     launch_kind: LaunchKind,
     cwd: platform_pty_command.Cwd,
+    advertise_terminal_capabilities: bool,
 ) !*Surface {
     // Init remaining fields
     surface.allocator = allocator;
     surface.selection = .{};
     surface.render_state = renderer.State.init(&surface.terminal);
     surface.launch_kind = launch_kind;
+    surface.advertise_terminal_capabilities = advertise_terminal_capabilities;
     surface.ssh_connection = null;
     surface.ssh_autofill_due_ms = 0;
     surface.ssh_autofill_deadline_ms = 0;
@@ -671,7 +675,7 @@ pub fn initVirtual(
     surface.command = .{};
     errdefer surface.command.deinit();
 
-    return finishInit(surface, allocator, cols, rows, .ssh, null);
+    return finishInit(surface, allocator, cols, rows, .ssh, null, false);
 }
 
 /// Deinitialize and free a Surface.
@@ -993,7 +997,7 @@ pub fn respawn(self: *Surface) void {
     var new_pty = Pty.open(.{ .ws_col = cols, .ws_row = rows }) catch |err|
         return self.respawnFailed(err);
     var new_command: Command = .{};
-    new_command.start(&new_pty, cmd, cwd) catch |err| {
+    new_command.start(&new_pty, cmd, cwd, self.advertise_terminal_capabilities) catch |err| {
         new_pty.deinit();
         return self.respawnFailed(err);
     };

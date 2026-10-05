@@ -63,6 +63,8 @@ const key_specs = [_]KeySpec{
     .{ .name = "ai-distill-suggest", .kind = .boolean, .default_value = "false", .values = bool_values[0..] },
     .{ .name = "http-use-system-proxy", .kind = .boolean, .default_value = "false", .values = bool_values[0..] },
     .{ .name = "http-proxy", .kind = .string, .default_value = "" },
+    .{ .name = "research-use-proxy", .kind = .boolean, .default_value = "false", .values = bool_values[0..] },
+    .{ .name = "research-proxy", .kind = .string, .default_value = "" },
     .{ .name = "ai-agent-enabled", .kind = .boolean, .default_value = "false", .values = bool_values[0..] },
     .{ .name = "ai-agent-permission", .kind = .one_of, .default_value = "ask", .values = agent_permissions[0..] },
     .{ .name = "ai-agent-command-timeout-ms", .kind = .uint, .default_value = "60000" },

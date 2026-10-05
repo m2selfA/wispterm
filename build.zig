@@ -1426,7 +1426,9 @@ fn createAppModuleWithRootAndTestShard(
         });
     }
 
-    if (platform.supports_resource_manifest) {
+    // Test shards do not produce a desktop app and do not need the icon resource.
+    // Keeping the manifest on the production `all` module avoids invoking Zig's Windows resource compiler in the large test module graph.
+    if (platform.supports_resource_manifest and std.mem.eql(u8, app_test_shard, "all")) {
         app_mod.addWin32ResourceFile(.{
             .file = b.path("assets/wispterm.rc"),
             .include_paths = &.{b.path("assets")},

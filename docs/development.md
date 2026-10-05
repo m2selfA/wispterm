@@ -48,6 +48,15 @@ Use Zig 0.15.2 and make sure `zig` (or `zig.exe` on Windows) is available on
 zig version
 ```
 
+When the checkout and Zig's global package cache are on different Windows drives,
+set `ZIG_GLOBAL_CACHE_DIR` to a cache directory on the checkout drive before
+running `zig build test-full`. Zig 0.15.2 dependency build steps can otherwise
+pass an absolute cross-drive child path to `convertPathArg`. For an E: checkout:
+
+```powershell
+$env:ZIG_GLOBAL_CACHE_DIR = "$(Get-Location)\.zig-global-cache"
+```
+
 On Windows, `build.zig` defaults to `x86_64-windows-gnu`, so a normal
 development build does not need an explicit `-Dtarget`. On macOS, pass
 `-Dtarget=aarch64-macos` (Apple Silicon) or `-Dtarget=x86_64-macos` (Intel)

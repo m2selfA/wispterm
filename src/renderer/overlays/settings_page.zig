@@ -15,6 +15,8 @@ pub const SETTINGS_RESTORE_DEFAULTS_ROW: usize = SETTINGS_CONTROL_ROW_START + 10
 /// Free of the shell-integration / raw-config indices on every OS.
 pub const SETTINGS_SYSTEM_PROXY_ROW: usize = SETTINGS_CONTROL_ROW_START + 13;
 pub const SETTINGS_PROXY_ADDRESS_ROW: usize = SETTINGS_CONTROL_ROW_START + 14;
+pub const SETTINGS_RESEARCH_PROXY_ROW: usize = SETTINGS_CONTROL_ROW_START + 15;
+pub const SETTINGS_RESEARCH_PROXY_ADDRESS_ROW: usize = SETTINGS_CONTROL_ROW_START + 16;
 
 pub const Category = enum {
     general,
@@ -42,6 +44,8 @@ const AI_ROWS = [_]usize{
     SETTINGS_CONTROL_ROW_START + 4, // default AI
     SETTINGS_SYSTEM_PROXY_ROW, // enable provider proxy
     SETTINGS_PROXY_ADDRESS_ROW, // system proxy or host:port
+    SETTINGS_RESEARCH_PROXY_ROW, // enable research proxy
+    SETTINGS_RESEARCH_PROXY_ADDRESS_ROW, // inherited or custom research proxy
     SETTINGS_CONTROL_ROW_START + 5, // WeChat direct
     SETTINGS_CONTROL_ROW_START + 8, // distill suggestions
 };
@@ -94,6 +98,9 @@ pub const Action = enum {
     toggle_system_proxy,
     edit_proxy,
     commit_proxy,
+    toggle_research_proxy,
+    edit_research_proxy,
+    commit_research_proxy,
     toggle_start_menu,
     toggle_startup,
     open_raw_config,
@@ -124,10 +131,15 @@ pub const State = struct {
     proxy_draft_invalid: bool = false,
     proxy_draft_len: usize = 0,
     proxy_draft: [255]u8 = undefined,
+    research_proxy_editing: bool = false,
+    research_proxy_draft_invalid: bool = false,
+    research_proxy_draft_len: usize = 0,
+    research_proxy_draft: [255]u8 = undefined,
 
     pub fn open(self: *State) void {
         self.closePicker(null);
         self.endProxyEdit();
+        self.endResearchProxyEdit();
         self.visible = true;
         self.selectCategory(.general);
         self.cfg_dirty = true;
@@ -135,6 +147,7 @@ pub const State = struct {
 
     pub fn selectCategory(self: *State, category: Category) void {
         self.endProxyEdit();
+        self.endResearchProxyEdit();
         const rows = categoryRows(category);
         if (rows.len == 0) return;
         self.category = category;
@@ -160,6 +173,7 @@ pub const State = struct {
     pub fn close(self: *State, allocator: ?std.mem.Allocator) void {
         self.visible = false;
         self.endProxyEdit();
+        self.endResearchProxyEdit();
         self.closePicker(null);
         if (self.cfg_loaded) {
             const alloc = allocator orelse return;
@@ -172,6 +186,7 @@ pub const State = struct {
 
     pub fn deinit(self: *State, allocator: std.mem.Allocator) void {
         self.closePicker(allocator);
+        self.endResearchProxyEdit();
         if (self.cfg_loaded) self.cfg_cache.deinit(allocator);
         self.cfg_cache = .{};
         self.cfg_loaded = false;
@@ -330,7 +345,56 @@ pub const State = struct {
         self.proxy_draft_invalid = false;
     }
 
+    pub fn beginResearchProxyEdit(self: *State, current: []const u8) void {
+        const trimmed = std.mem.trim(u8, current, " \t\r\n");
+        const n = @min(trimmed.len, self.research_proxy_draft.len);
+        @memcpy(self.research_proxy_draft[0..n], trimmed[0..n]);
+        self.research_proxy_draft_len = n;
+        self.research_proxy_editing = true;
+        self.research_proxy_draft_invalid = false;
+    }
+
+    pub fn endResearchProxyEdit(self: *State) void {
+        self.research_proxy_editing = false;
+        self.research_proxy_draft_len = 0;
+        self.research_proxy_draft_invalid = false;
+    }
+
+    pub fn researchProxyDraft(self: *const State) []const u8 {
+        return self.research_proxy_draft[0..self.research_proxy_draft_len];
+    }
+
+    pub fn insertResearchProxyChar(self: *State, cp: u21) bool {
+        if (!self.research_proxy_editing) return false;
+        if (cp < 33 or cp > 126) return true;
+        const c: u8 = @intCast(cp);
+        if (!proxyAddressChar(c) or self.research_proxy_draft_len >= self.research_proxy_draft.len) return true;
+        self.research_proxy_draft[self.research_proxy_draft_len] = c;
+        self.research_proxy_draft_len += 1;
+        self.research_proxy_draft_invalid = false;
+        return true;
+    }
+
+    pub fn researchProxyBackspace(self: *State) void {
+        if (self.research_proxy_draft_len > 0) self.research_proxy_draft_len -= 1;
+        self.research_proxy_draft_invalid = false;
+    }
+
     pub fn handleKey(self: *State, ev: input_key.KeyEvent) ?Action {
+        if (self.research_proxy_editing) {
+            return switch (ev.key) {
+                .escape => blk: {
+                    self.endResearchProxyEdit();
+                    break :blk null;
+                },
+                .enter => .commit_research_proxy,
+                .backspace, .delete => blk: {
+                    self.researchProxyBackspace();
+                    break :blk null;
+                },
+                else => null,
+            };
+        }
         if (self.proxy_editing) {
             return switch (ev.key) {
                 .escape => blk: {
@@ -440,6 +504,8 @@ pub const State = struct {
             8 => .toggle_distill_suggest,
             13 => .toggle_system_proxy,
             14 => .edit_proxy,
+            15 => .toggle_research_proxy,
+            16 => .edit_research_proxy,
             9 + SHELL_INTEGRATION_ROWS => .open_raw_config,
             10 + SHELL_INTEGRATION_ROWS => .restore_defaults,
             else => null,
@@ -474,6 +540,8 @@ pub const State = struct {
             SETTINGS_CONTROL_ROW_START + 8 => .toggle_distill_suggest,
             SETTINGS_SYSTEM_PROXY_ROW => .toggle_system_proxy,
             SETTINGS_PROXY_ADDRESS_ROW => .edit_proxy,
+            SETTINGS_RESEARCH_PROXY_ROW => .toggle_research_proxy,
+            SETTINGS_RESEARCH_PROXY_ADDRESS_ROW => .edit_research_proxy,
             SETTINGS_CONTROL_ROW_START + 9 + SHELL_INTEGRATION_ROWS => .open_raw_config,
             SETTINGS_CONTROL_ROW_START + 10 + SHELL_INTEGRATION_ROWS => .restore_defaults,
             else => null,
@@ -554,6 +622,18 @@ test "settings proxy address accepts host:port and backspace" {
     try std.testing.expectEqual(Action.commit_proxy, state.handleKey(.{ .key = .enter }).?);
     try std.testing.expectEqual(@as(?Action, null), state.handleKey(.{ .key = .escape }));
     try std.testing.expect(!state.proxy_editing);
+}
+
+test "settings research proxy toggle and address edit are independent" {
+    var state = State{ .visible = true, .category = .ai, .focus = SETTINGS_RESEARCH_PROXY_ROW };
+    try std.testing.expectEqual(Action.toggle_research_proxy, state.focusPrimaryAction().?);
+    state.focus = SETTINGS_RESEARCH_PROXY_ADDRESS_ROW;
+    try std.testing.expectEqual(Action.edit_research_proxy, state.focusPrimaryAction().?);
+    state.beginResearchProxyEdit("");
+    try std.testing.expect(state.insertResearchProxyChar('1'));
+    try std.testing.expectEqualStrings("1", state.researchProxyDraft());
+    try std.testing.expectEqual(Action.commit_research_proxy, state.handleKey(.{ .key = .enter }).?);
+    state.endResearchProxyEdit();
 }
 
 test "settings page category selection scopes visible rows" {
