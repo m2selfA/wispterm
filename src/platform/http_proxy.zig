@@ -20,7 +20,7 @@ pub fn load(allocator: std.mem.Allocator) Route {
     return fromSettings(allocator, cfg.@"http-use-system-proxy", cfg.@"http-proxy");
 }
 
-/// Resolve the independent research route. An empty custom value inherits the AI Proxy route.
+/// Resolve the independent research route. An empty custom value inherits the AI proxy address.
 pub fn loadResearch(allocator: std.mem.Allocator) Route {
     var cfg = Config.load(allocator) catch return .{};
     defer cfg.deinit(allocator);
@@ -33,7 +33,9 @@ pub fn loadResearch(allocator: std.mem.Allocator) Route {
     );
 }
 
-/// Pure research route construction: custom address overrides, empty inherits the AI route.
+/// Pure research route construction. A custom address wins. Empty inherits
+/// `base_value` and stays enabled: `research_enabled` is the switch, and the
+/// AI proxy toggle does not gate this route.
 pub fn fromResearchSettings(
     allocator: std.mem.Allocator,
     research_enabled: bool,
@@ -42,9 +44,10 @@ pub fn fromResearchSettings(
     base_value: []const u8,
 ) Route {
     if (!research_enabled) return .{};
+    _ = base_enabled;
     const trimmed = std.mem.trim(u8, research_value, " \t\r\n");
     if (trimmed.len > 0) return fromSettings(allocator, true, trimmed);
-    return fromSettings(allocator, base_enabled, base_value);
+    return fromSettings(allocator, true, base_value);
 }
 
 /// Pure route construction used by callers and unit tests.
@@ -71,6 +74,16 @@ test "research route inherits or overrides the AI proxy" {
     var custom = fromResearchSettings(allocator, true, "127.0.0.1:2", false, "127.0.0.1:1");
     defer custom.deinit(allocator);
     try std.testing.expectEqualStrings("127.0.0.1:2", custom.explicit.?);
+
+    var inherited_while_ai_off = fromResearchSettings(allocator, true, "", false, "127.0.0.1:1");
+    defer inherited_while_ai_off.deinit(allocator);
+    try std.testing.expect(inherited_while_ai_off.enabled);
+    try std.testing.expectEqualStrings("127.0.0.1:1", inherited_while_ai_off.explicit.?);
+
+    var system_while_ai_off = fromResearchSettings(allocator, true, "", false, "  ");
+    defer system_while_ai_off.deinit(allocator);
+    try std.testing.expect(system_while_ai_off.enabled);
+    try std.testing.expect(system_while_ai_off.explicit == null);
 
     var disabled = fromResearchSettings(allocator, false, "127.0.0.1:2", true, "127.0.0.1:1");
     defer disabled.deinit(allocator);

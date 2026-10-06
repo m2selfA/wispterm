@@ -663,6 +663,22 @@ static uintptr_t wispterm_macos_map_key_code(unsigned short key_code, NSString *
         case 124: return 0x27; // Right
         case 125: return 0x28; // Down
         case 126: return 0x26; // Up
+        // Carbon F-keys must win before the character fallback. AppKit reports
+        // NSF1FunctionKey–NSF12FunctionKey (U+F704…), which miss the shared
+        // Win32 VK_F1–VK_F12 encoder. Ghostty classifies the same physical keys
+        // as f1–f12 in its macOS apprt before encoding.
+        case 122: return 0x70; // kVK_F1
+        case 120: return 0x71; // kVK_F2
+        case 99: return 0x72;  // kVK_F3
+        case 118: return 0x73; // kVK_F4
+        case 96: return 0x74;  // kVK_F5
+        case 97: return 0x75;  // kVK_F6
+        case 98: return 0x76;  // kVK_F7
+        case 100: return 0x77; // kVK_F8
+        case 101: return 0x78; // kVK_F9
+        case 109: return 0x79; // kVK_F10
+        case 103: return 0x7A; // kVK_F11
+        case 111: return 0x7B; // kVK_F12
         default: break;
     }
 
