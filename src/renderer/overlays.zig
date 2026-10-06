@@ -4329,6 +4329,7 @@ fn connectSshProfileTmux(idx: usize) void {
         .identity_file = conn.identityFile(),
         .password_auth = conn.password_auth,
         .legacy_algorithms = AppWindow.g_ssh_legacy_algorithms,
+        .terminal_capabilities = tab.g_ssh_terminal_capabilities,
         .proxy_jump = conn.proxyJump(),
         .remote_command = remote,
     }) orelse return;
@@ -4385,6 +4386,7 @@ fn connectSshProfileReturningSurfaceWithCommand(idx: usize, remote_command: []co
         .identity_file = conn.identityFile(),
         .password_auth = conn.password_auth,
         .legacy_algorithms = AppWindow.g_ssh_legacy_algorithms,
+        .terminal_capabilities = tab.g_ssh_terminal_capabilities,
         .proxy_jump = conn.proxyJump(),
         .remote_command = remote_command,
     }) orelse return null;
@@ -6948,7 +6950,12 @@ pub fn settingsPageHandleKey(ev: input_key.KeyEvent) AppWindow.UiEffect {
 pub fn settingsPageInsertChar(cp: u21) bool {
     if (!settingsPageVisible()) return false;
     const state = settingsState();
-    return state.insertProxyChar(cp) or state.insertPickerChar(cp);
+    if (!state.research_proxy_editing and state.focus == settings_page.SETTINGS_RESEARCH_PROXY_ADDRESS_ROW) {
+        const allocator = AppWindow.g_allocator orelse return false;
+        const cfg = settingsCfg(allocator);
+        state.beginResearchProxyEdit(cfg.@"research-proxy");
+    }
+    return state.insertResearchProxyChar(cp) or state.insertProxyChar(cp) or state.insertPickerChar(cp);
 }
 
 fn saveProxyDraft(allocator: std.mem.Allocator) void {
@@ -6960,6 +6967,17 @@ fn saveProxyDraft(allocator: std.mem.Allocator) void {
     }
     Config.setConfigValue(allocator, "http-proxy", draft) catch return;
     state.endProxyEdit();
+}
+
+fn saveResearchProxyDraft(allocator: std.mem.Allocator) void {
+    const state = settingsState();
+    const draft = state.researchProxyDraft();
+    if (draft.len > 0 and platform_http.parseProxy(draft) == null) {
+        state.research_proxy_draft_invalid = true;
+        return;
+    }
+    Config.setConfigValue(allocator, "research-proxy", draft) catch return;
+    state.endResearchProxyEdit();
 }
 
 pub fn settingsPageExecuteAt(xpos: f64, ypos: f64, window_height: f32, top_offset: f32, content_x: f32, content_width: f32) bool {
@@ -7002,6 +7020,10 @@ fn executeSettingsAction(action: SettingsAction) void {
     if (settingsState().proxy_editing and action != .commit_proxy and action != .edit_proxy) {
         if (AppWindow.g_allocator) |allocator| saveProxyDraft(allocator);
         if (settingsState().proxy_draft_invalid) settingsState().endProxyEdit();
+    }
+    if (settingsState().research_proxy_editing and action != .commit_research_proxy and action != .edit_research_proxy) {
+        if (AppWindow.g_allocator) |allocator| saveResearchProxyDraft(allocator);
+        if (settingsState().research_proxy_draft_invalid) settingsState().endResearchProxyEdit();
     }
     switch (action) {
         .select_general => {
@@ -7061,6 +7083,9 @@ fn executeSettingsAction(action: SettingsAction) void {
         .toggle_system_proxy => Config.setConfigValue(allocator, "http-use-system-proxy", if (cfg.@"http-use-system-proxy") "false" else "true") catch {},
         .edit_proxy => if (settingsState().proxy_editing) saveProxyDraft(allocator) else settingsState().beginProxyEdit(cfg.@"http-proxy"),
         .commit_proxy => saveProxyDraft(allocator),
+        .toggle_research_proxy => Config.setConfigValue(allocator, "research-use-proxy", if (cfg.@"research-use-proxy") "false" else "true") catch {},
+        .edit_research_proxy => if (settingsState().research_proxy_editing) saveResearchProxyDraft(allocator) else settingsState().beginResearchProxyEdit(cfg.@"research-proxy"),
+        .commit_research_proxy => saveResearchProxyDraft(allocator),
         .toggle_start_menu => shell_integration.setEnabled(allocator, .start_menu, !shell_integration.isEnabled(allocator, .start_menu)) catch {},
         .toggle_startup => shell_integration.setEnabled(allocator, .startup, !shell_integration.isEnabled(allocator, .startup)) catch {},
         .open_raw_config => Config.openConfigInEditor(allocator),
@@ -7199,6 +7224,19 @@ fn proxyAddressText(state: *const settings_page.State, configured: []const u8, b
     return configured;
 }
 
+fn researchProxyAddressText(state: *const settings_page.State, configured: []const u8, base_configured: []const u8, buf: []u8) []const u8 {
+    if (state.research_proxy_editing) {
+        const draft = state.researchProxyDraft();
+        if (draft.len == 0) return "|";
+        return std.fmt.bufPrint(buf, "{s}|", .{draft}) catch draft;
+    }
+    if (std.mem.trim(u8, configured, " \t\r\n").len == 0) {
+        _ = base_configured;
+        return if (i18n.lang() == .zh_CN) "继承 AI 代理" else "AI proxy setting";
+    }
+    return configured;
+}
+
 /// Config value string for the next language in the cycle (auto → en → zh-CN → auto).
 fn nextLanguageSetting(setting: i18n.LanguageSetting) []const u8 {
     return switch (setting) {
@@ -7265,6 +7303,8 @@ pub fn renderSettingsPage(window_height: f32, top_offset: f32, content_x: f32, c
                 SETTINGS_CONTROL_ROW_START + 8 => boolText(cfg.@"ai-distill-suggest"),
                 settings_page.SETTINGS_SYSTEM_PROXY_ROW => boolText(cfg.@"http-use-system-proxy"),
                 settings_page.SETTINGS_PROXY_ADDRESS_ROW => proxyAddressText(state, cfg.@"http-proxy", buf),
+                settings_page.SETTINGS_RESEARCH_PROXY_ROW => boolText(cfg.@"research-use-proxy"),
+                settings_page.SETTINGS_RESEARCH_PROXY_ADDRESS_ROW => researchProxyAddressText(state, cfg.@"research-proxy", cfg.@"http-proxy", buf),
                 settings_page.SETTINGS_RAW_CONFIG_ROW => i18n.s().settings_value_open,
                 settings_page.SETTINGS_RESTORE_DEFAULTS_ROW => "Enter",
                 else => "",

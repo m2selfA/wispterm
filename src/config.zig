@@ -284,6 +284,9 @@ theme: ?[]const u8 = null,
 /// Add legacy OpenSSH algorithms for older bastion/servers.
 @"ssh-legacy-algorithms": bool = false,
 
+/// Advertise WispTerm terminal capabilities to remote SSH sessions.
+@"ssh-advertise-terminal-capabilities": bool = false,
+
 /// Enable agent tools for AI Chat profiles by default.
 @"ai-agent-enabled": bool = false,
 
@@ -308,14 +311,19 @@ theme: ?[]const u8 = null,
 /// never appears unless the user opts in (see settings page / issue #184).
 @"ai-distill-suggest": bool = false,
 
-/// When true, AI provider HTTP uses a proxy. The address is `http-proxy`;
-/// an empty address uses the system proxy (WinHTTP, the macOS session, or
-/// https_proxy/http_proxy/all_proxy on Linux). Off leaves those calls direct.
+/// When true, AI provider HTTP uses the AI Proxy settings. Research tools have
+/// their own `research-use-proxy` / `research-proxy` settings below.
 @"http-use-system-proxy": bool = false,
 
-/// Proxy for AI provider HTTP when `http-use-system-proxy` is on.
-/// Empty selects the system proxy. Otherwise `host:port` or `http://host:port`.
+/// AI Proxy address when `http-use-system-proxy` is on. Empty selects the system
+/// proxy. Otherwise `host:port` or `http://host:port`.
 @"http-proxy": []const u8 = "",
+
+/// Enable the independent research-tool proxy. Empty `research-proxy` inherits the AI Proxy setting.
+@"research-use-proxy": bool = false,
+
+/// Custom research proxy; empty inherits `http-proxy` when research proxy is enabled.
+@"research-proxy": []const u8 = "",
 
 /// Agent command permission mode: ask, auto, or full.
 @"ai-agent-permission": ai_agent_config.AgentPermission = .confirm,
@@ -935,6 +943,14 @@ fn applyKeyValue(self: *Config, allocator: std.mem.Allocator, key: []const u8, v
         } else {
             log.warn("invalid ssh-legacy-algorithms: {s}", .{value});
         }
+    } else if (std.mem.eql(u8, key, "ssh-advertise-terminal-capabilities")) {
+        if (std.mem.eql(u8, value, "true")) {
+            self.@"ssh-advertise-terminal-capabilities" = true;
+        } else if (std.mem.eql(u8, value, "false")) {
+            self.@"ssh-advertise-terminal-capabilities" = false;
+        } else {
+            log.warn("invalid ssh-advertise-terminal-capabilities: {s}", .{value});
+        }
     } else if (std.mem.eql(u8, key, "ai-agent-enabled")) {
         if (std.mem.eql(u8, value, "true")) {
             self.@"ai-agent-enabled" = true;
@@ -943,6 +959,17 @@ fn applyKeyValue(self: *Config, allocator: std.mem.Allocator, key: []const u8, v
         } else {
             log.warn("invalid ai-agent-enabled: {s}", .{value});
         }
+    } else if (std.mem.eql(u8, key, "research-use-proxy")) {
+        if (std.mem.eql(u8, value, "true")) {
+            self.@"research-use-proxy" = true;
+        } else if (std.mem.eql(u8, value, "false")) {
+            self.@"research-use-proxy" = false;
+        } else {
+            log.warn("invalid research-use-proxy: {s}", .{value});
+        }
+    } else if (std.mem.eql(u8, key, "research-proxy")) {
+        const trimmed = std.mem.trim(u8, value, " \t\r\n");
+        self.@"research-proxy" = self.dupeString(allocator, trimmed) orelse return;
     } else if (std.mem.eql(u8, key, "ai-agent-permission")) {
         if (ai_agent_config.AgentPermission.parse(value)) |permission| {
             self.@"ai-agent-permission" = permission;
@@ -1523,6 +1550,7 @@ pub fn writeHelp(writer: anytype) !void {
         \\  --url-open-mode <mode>       embedded | system-browser
         \\  --language <lang>            UI language: auto | en | zh-CN (default: auto)
         \\  --ssh-legacy-algorithms <bool> Enable legacy ssh-rsa/ssh-dss OpenSSH options
+        \\  --ssh-advertise-terminal-capabilities <bool> Advertise WispTerm capabilities to SSH sessions
         \\  --ai-agent-enabled <bool>    Enable AI Chat agent tools by default
         \\  --ai-agent-permission <mode> Agent tool permission: ask | auto | full
         \\  --ai-agent-command-timeout-ms <ms> Agent command timeout budget
@@ -1807,6 +1835,8 @@ pub const settings_reset_keys = [_][]const u8{
     "ai-distill-suggest",
     "http-use-system-proxy",
     "http-proxy",
+    "research-use-proxy",
+    "research-proxy",
 };
 
 /// Revert every settings-page option to its built-in default by removing its
@@ -1914,6 +1944,7 @@ const default_config_template =
     \\# SSH compatibility for older bastions/servers.
     \\# Adds ssh-rsa/ssh-dss and legacy KEX/cipher options to profile/helper SSH.
     \\# ssh-legacy-algorithms = false
+    \\# ssh-advertise-terminal-capabilities = false
     \\
     \\# AI Chat agent tools (disabled by default)
     \\# ai-agent-enabled = false
@@ -1924,6 +1955,8 @@ const default_config_template =
     \\# ai-distill-suggest = false      # auto-suggest distilling reusable tasks into a skill
     \\# http-use-system-proxy = false  # send AI provider HTTP through a proxy
     \\# http-proxy =                   # empty = system proxy; or 127.0.0.1:6789
+    \\# research-use-proxy = false  # research tools use inherited/custom proxy
+    \\# research-proxy =          # empty = inherit http-proxy
     \\
     \\# Jina API key — used by $websearch / websearch and $webread / webread
     \\# (optional for $webread: r.jina.ai reads anonymously)
@@ -2382,6 +2415,15 @@ test "config: ssh legacy algorithm option parses" {
     try std.testing.expectEqual(true, cfg.@"ssh-legacy-algorithms");
 }
 
+test "config: SSH terminal capability advertisement defaults off and parses" {
+    const allocator = std.testing.allocator;
+    var cfg: Config = .{};
+
+    try std.testing.expectEqual(false, cfg.@"ssh-advertise-terminal-capabilities");
+    cfg.applyKeyValue(allocator, "ssh-advertise-terminal-capabilities", "true", ".");
+    try std.testing.expectEqual(true, cfg.@"ssh-advertise-terminal-capabilities");
+}
+
 test "config: remote session key parses" {
     const allocator = std.testing.allocator;
     var cfg: Config = .{};
@@ -2498,6 +2540,19 @@ test "ai-distill-suggest parses true/false and defaults off" {
     // unknown value leaves it unchanged (still false)
     cfg.applyKeyValue(allocator, "ai-distill-suggest", "maybe", ".");
     try std.testing.expect(!cfg.@"ai-distill-suggest");
+}
+
+test "research proxy defaults off and parses independent settings" {
+    const allocator = std.testing.allocator;
+    var cfg: Config = .{};
+    defer cfg.deinit(allocator);
+
+    try std.testing.expect(!cfg.@"research-use-proxy");
+    try std.testing.expectEqualStrings("", cfg.@"research-proxy");
+    cfg.applyKeyValue(allocator, "research-use-proxy", "true", ".");
+    cfg.applyKeyValue(allocator, "research-proxy", " 127.0.0.1:10808 ", ".");
+    try std.testing.expect(cfg.@"research-use-proxy");
+    try std.testing.expectEqualStrings("127.0.0.1:10808", cfg.@"research-proxy");
 }
 
 test "http-use-system-proxy parses true/false and defaults off" {

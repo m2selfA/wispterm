@@ -7,6 +7,7 @@ pub const App = enum {
     /// In-app AI session (AI-chat tab / copilot sidebar), not a PTY agent.
     /// Lets tab badges reuse Detection for those sessions.
     assistant,
+    pi,
 
     pub fn label(self: App) []const u8 {
         return switch (self) {
@@ -14,6 +15,7 @@ pub const App = enum {
             .codex => "codex",
             .claude_code => "claude_code",
             .assistant => "assistant",
+            .pi => "pi",
         };
     }
 
@@ -24,6 +26,7 @@ pub const App = enum {
             .codex => "Codex",
             .claude_code => "Claude Code",
             .assistant => "Copilot",
+            .pi => "Pi",
         };
     }
 };
@@ -213,7 +216,7 @@ test "agent detector ignores legacy Codex ready screen" {
 /// Emitted by agent hooks (e.g. Claude Code) for an AUTHORITATIVE state signal
 /// that overrides the heuristic `detect`. The wire labels are this module's own
 /// State/App `.label()` strings (running/waiting_approval/needs_input/halted/
-/// failed/done; codex/claude_code), so no separate vocabulary exists.
+/// failed/done; codex/claude_code/pi), so no separate vocabulary exists.
 pub const OSC_NUM: u16 = 7748;
 pub const TAG = "wispterm-agent";
 
@@ -234,6 +237,7 @@ pub fn appFromLabel(s: []const u8) ?App {
     if (std.mem.eql(u8, s, "none")) return .none;
     if (std.mem.eql(u8, s, "codex")) return .codex;
     if (std.mem.eql(u8, s, "claude_code")) return .claude_code;
+    if (std.mem.eql(u8, s, "pi")) return .pi;
     if (std.mem.eql(u8, s, "assistant")) return .assistant;
     return null;
 }
@@ -243,11 +247,12 @@ pub fn appFromCommand(cmd: []const u8) App {
     const base = std.fs.path.basename(std.mem.trim(u8, cmd, " "));
     if (std.mem.eql(u8, base, "claude")) return .claude_code;
     if (std.mem.eql(u8, base, "codex")) return .codex;
+    if (std.mem.eql(u8, base, "pi")) return .pi;
     return .none;
 }
 
 /// Parse the OSC 7748 payload (after `OSC 7748;`, terminator stripped):
-/// `wispterm-agent;state=running;app=claude_code`. Returns an authoritative
+/// `wispterm-agent;state=running;app=pi`. Returns an authoritative
 /// Detection (confidence 100). Requires a recognized `state=`; `app=` optional
 /// (defaults .none). Returns null if the tag is missing or state is absent/unknown.
 pub fn parseMarker(payload: []const u8) ?Detection {
@@ -297,9 +302,20 @@ test "parseMarker yields an authoritative Detection in the existing vocabulary" 
     try std.testing.expect(d.visible());
 }
 
+test "parseMarker maps Pi as an authoritative app" {
+    const d = parseMarker("wispterm-agent;state=running;app=pi").?;
+    try std.testing.expectEqual(App.pi, d.app);
+    try std.testing.expectEqual(State.running, d.state);
+}
+
 test "parseMarker maps waiting_approval and done" {
     try std.testing.expectEqual(State.waiting_approval, parseMarker("wispterm-agent;state=waiting_approval;app=claude_code").?.state);
     try std.testing.expectEqual(State.done, parseMarker("wispterm-agent;state=done;app=claude_code").?.state);
+}
+
+test "parseMarker keeps similarly named app labels distinct from Pi" {
+    const d = parseMarker("wispterm-agent;state=running;app=pilot").?;
+    try std.testing.expectEqual(App.none, d.app);
 }
 
 test "parseMarker rejects wrong tag / missing or unknown state" {
@@ -311,15 +327,18 @@ test "parseMarker rejects wrong tag / missing or unknown state" {
 test "appFromCommand maps known agents" {
     try std.testing.expectEqual(App.claude_code, appFromCommand("claude"));
     try std.testing.expectEqual(App.codex, appFromCommand("/usr/bin/codex"));
+    try std.testing.expectEqual(App.pi, appFromCommand("pi"));
     try std.testing.expectEqual(App.none, appFromCommand("bash"));
 }
 
 test "assistant App round-trips its label and has a display name" {
     try std.testing.expectEqualStrings("assistant", App.assistant.label());
     try std.testing.expectEqual(App.assistant, appFromLabel("assistant").?);
+    try std.testing.expectEqual(App.pi, appFromLabel("pi").?);
     try std.testing.expectEqualStrings("Copilot", App.assistant.displayName());
     try std.testing.expectEqualStrings("Claude Code", App.claude_code.displayName());
     try std.testing.expectEqualStrings("Codex", App.codex.displayName());
+    try std.testing.expectEqualStrings("Pi", App.pi.displayName());
     try std.testing.expectEqualStrings("Agent", App.none.displayName());
 }
 

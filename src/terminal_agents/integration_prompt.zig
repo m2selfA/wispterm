@@ -14,7 +14,7 @@ pub const prompt_text =
     \\- Emit OSC 7748 with this payload shape:
     \\  wispterm-agent;state=<state>;app=<app>
     \\- Known states: running, waiting_approval, needs_input, halted, failed, done.
-    \\- Known app labels: app=codex for Codex, app=claude_code for Claude Code.
+    \\- Known app labels: app=codex for Codex, app=claude_code for Claude Code, app=pi for Pi.
     \\- If this is another agent and WispTerm has no app label for it yet, do not invent a label. Ask the user whether they want WispTerm updated for that agent.
     \\
     \\POSIX hook command template:
@@ -37,7 +37,7 @@ pub const prompt_text =
     \\- Write markers to the controlling terminal, not to captured stdout logs.
     \\- Use /dev/tty on POSIX and CONOUT$ on Windows when available.
     \\- Keep all commands best-effort, quiet, and non-blocking.
-    \\- Use app=codex only for Codex hooks and app=claude_code only for Claude Code hooks.
+    \\- Use app=codex only for Codex hooks, app=claude_code only for Claude Code hooks, and app=pi only for Pi hooks.
     \\- Explain exactly which file(s) you changed and how the user can remove the integration.
 ;
 
@@ -53,6 +53,7 @@ test "integration prompt describes WispTerm OSC contract for external agents" {
     try std.testing.expect(std.mem.indexOf(u8, prompt, "waiting_approval") != null);
     try std.testing.expect(std.mem.indexOf(u8, prompt, "app=codex") != null);
     try std.testing.expect(std.mem.indexOf(u8, prompt, "app=claude_code") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "app=pi") != null);
     try std.testing.expect(std.mem.indexOf(u8, prompt, "/dev/tty") != null);
     try std.testing.expect(std.mem.indexOf(u8, prompt, "CONOUT$") != null);
     try std.testing.expect(std.mem.indexOf(u8, prompt, "Do not disable WispTerm") != null);

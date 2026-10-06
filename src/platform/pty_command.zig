@@ -289,7 +289,7 @@ pub fn wslSessionToolName() []const u8 {
 }
 
 pub fn wslSessionToolDescription() []const u8 {
-    return "Run a POSIX shell command in the selected already-open WSL terminal surface. The surface_id must match the current terminal_select context. Use only when the surface is at a shell prompt and the command returns. Never use heredocs or multiline shell input to create or feed scripts; use write_file for the content, including large or temporary scripts, then run the file separately. For R, Python, Codex, Claude Code, other REPLs, or launching full-screen agent apps, use terminal_repl_exec.";
+    return "Run a POSIX shell command in the selected already-open WSL terminal surface. The surface_id must match the current terminal_select context. Use only when the surface is at a shell prompt and the command returns. Never use heredocs or multiline shell input to create or feed scripts; use write_file for the content, including large or temporary scripts, then run the file separately. For R, Python, Codex, Claude Code, Pi, other REPLs, or launching full-screen agent apps, use terminal_repl_exec.";
 }
 
 pub fn wslSessionToolPropertiesJson() []const u8 {
@@ -800,6 +800,7 @@ test "platform pty command exposes session launcher layout by target OS" {
     try std.testing.expect(std.mem.indexOf(u8, wslSessionToolDescription(), "Never use heredocs") != null);
     try std.testing.expect(std.mem.indexOf(u8, wslSessionToolDescription(), "write_file") != null);
     try std.testing.expect(std.mem.indexOf(u8, wslSessionToolDescription(), "large or temporary scripts") != null);
+    try std.testing.expect(std.mem.indexOf(u8, wslSessionToolDescription(), "Pi") != null);
 }
 
 test "platform pty command derives session launcher layout from WSL presence" {
@@ -882,6 +883,16 @@ test "platform pty command builds shell command lines for AI History resume" {
     try std.testing.expect(std.mem.indexOf(u8, ssh_command, "user@example.test") != null);
     try std.testing.expect(std.mem.indexOf(u8, ssh_command, "codex resume abc") != null);
     try std.testing.expect(std.mem.indexOf(u8, ssh_command, "TERM_PROGRAM") == null);
+}
+
+test "platform pty command advertises SSH terminal capabilities only when enabled" {
+    var buf: [1024]u8 = undefined;
+    const disabled = sshInteractiveCommand(&buf, .{ .user = "user", .host = "example.test" }).?;
+    try std.testing.expect(std.mem.indexOf(u8, disabled, "SetEnv=TERM_PROGRAM") == null);
+
+    const enabled = sshInteractiveCommand(&buf, .{ .user = "user", .host = "example.test", .terminal_capabilities = true }).?;
+    try std.testing.expect(std.mem.indexOf(u8, enabled, "SetEnv=TERM_PROGRAM=ghostty") != null);
+    try std.testing.expect(std.mem.indexOf(u8, enabled, "SetEnv=COLORTERM=truecolor") != null);
 }
 
 test "platform pty command selects backend by target OS" {

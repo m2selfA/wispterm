@@ -29,6 +29,7 @@ pub const SshCommandOptions = struct {
     legacy_algorithms: bool = false,
     proxy_jump: []const u8 = "",
     remote_command: []const u8 = "",
+    terminal_capabilities: bool = false,
 };
 
 const HANDLE = windows.HANDLE;
@@ -457,6 +458,9 @@ fn appendSshOptionString(buf: []u8, pos: *usize, options: SshCommandOptions, mod
     // ridden out by TCP retransmission instead of OpenSSH hard-killing the
     // session after 3 missed probes. Keep both platforms' builders in sync.
     if (!appendAscii(buf, pos, "-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -o ServerAliveCountMax=20 ")) return false;
+    if (options.terminal_capabilities) {
+        if (!appendAscii(buf, pos, "-o SetEnv=TERM_PROGRAM=ghostty -o SetEnv=COLORTERM=truecolor ")) return false;
+    }
     const auth_method = effectiveSshAuthMethod(options);
     switch (auth_method) {
         .password => {
@@ -533,30 +537,42 @@ fn appendWslenvEntry(allocator: std.mem.Allocator, env: *std.process.EnvMap, ent
     try env.put(key, entry);
 }
 
+fn applyNativeTerminalEnvironment(env: *std.process.EnvMap) !void {
+    // WispTerm embeds Ghostty's VT and Kitty graphics renderer. Advertise the
+    // terminal identity so TUIs such as Pi select Kitty image output instead
+    // of conservatively disabling images on native Windows consoles.
+    try env.put("COLORTERM", "truecolor");
+    try env.put("TERM_PROGRAM", "ghostty");
+}
+
 fn applyWslTerminalEnvironment(allocator: std.mem.Allocator, env: *std.process.EnvMap) !void {
     try env.put("TERM", "xterm-256color");
-    try env.put("COLORTERM", "truecolor");
+    try applyNativeTerminalEnvironment(env);
     // Advertise as Ghostty (our embedded VT engine) so TUIs that gate the Kitty
     // keyboard protocol on a TERM_PROGRAM allowlist (Claude Code, …) enable it
     // and Shift+Enter becomes a distinct CSI-u sequence. See pty_posix.zig and
     // issue #302.
-    try env.put("TERM_PROGRAM", "ghostty");
 
     try appendWslenvEntry(allocator, env, "TERM/u");
     try appendWslenvEntry(allocator, env, "COLORTERM/u");
     try appendWslenvEntry(allocator, env, "TERM_PROGRAM/u");
 }
 
-fn allocWslEnvironmentBlock(
+fn allocTerminalEnvironmentBlock(
     allocator: std.mem.Allocator,
     command: CommandLine,
     env_map_out: *?std.process.EnvMap,
+    advertise_terminal_capabilities: bool,
 ) !?[]u16 {
-    if (launchKindForCommand(command) != .wsl) return null;
+    const launch_kind = launchKindForCommand(command);
+    if (launch_kind == .ssh and !advertise_terminal_capabilities) return null;
 
     var env = try std.process.getEnvMap(allocator);
     errdefer env.deinit();
-    try applyWslTerminalEnvironment(allocator, &env);
+    switch (launch_kind) {
+        .local, .ssh => try applyNativeTerminalEnvironment(&env),
+        .wsl => try applyWslTerminalEnvironment(allocator, &env),
+    }
 
     const env_block = try std.process.createWindowsEnvBlock(allocator, &env);
     env_map_out.* = env;
@@ -574,7 +590,7 @@ pub const Command = struct {
     attr_list: ?*anyopaque = null,
     attr_list_size: usize = 0,
 
-    fn start(self: *Command, pseudo_console: PseudoConsoleHandle, command: CommandLine, cwd: Cwd) !void {
+    fn start(self: *Command, pseudo_console: PseudoConsoleHandle, command: CommandLine, cwd: Cwd, advertise_terminal_capabilities: bool) !void {
         // Query required attribute list size.
         var attr_size: usize = 0;
         _ = InitializeProcThreadAttributeList(null, 1, 0, &attr_size);
@@ -619,7 +635,7 @@ pub const Command = struct {
         var env_map: ?std.process.EnvMap = null;
         defer if (env_map) |*map| map.deinit();
 
-        const env_block = try allocWslEnvironmentBlock(std.heap.page_allocator, command, &env_map);
+        const env_block = try allocTerminalEnvironmentBlock(std.heap.page_allocator, command, &env_map, advertise_terminal_capabilities);
         defer if (env_block) |block| std.heap.page_allocator.free(block);
 
         const creation_flags: DWORD = extended_startupinfo_present |
@@ -705,8 +721,8 @@ pub const Command = struct {
     }
 };
 
-pub fn startInPseudoConsole(command: *Command, pseudo_console: PseudoConsoleHandle, command_line: CommandLine, cwd: Cwd) !void {
-    return command.start(pseudo_console, command_line, cwd);
+pub fn startInPseudoConsole(command: *Command, pseudo_console: PseudoConsoleHandle, command_line: CommandLine, cwd: Cwd, advertise_terminal_capabilities: bool) !void {
+    return command.start(pseudo_console, command_line, cwd, advertise_terminal_capabilities);
 }
 
 pub fn cwdToUtf8(out: []u8, cwd: Cwd) ?[]u8 {
@@ -881,6 +897,43 @@ test "windows pty command builds WSL exec argv for helper processes" {
     try std.testing.expectEqualStrings("sh", argv[2]);
     try std.testing.expectEqualStrings("-lc", argv[3]);
     try std.testing.expectEqualStrings("printf %s \"$HOME\"", argv[4]);
+}
+
+test "windows pty command advertises native terminal capabilities" {
+    var env = std.process.EnvMap.init(std.testing.allocator);
+    defer env.deinit();
+
+    try applyNativeTerminalEnvironment(&env);
+
+    try std.testing.expectEqualStrings("truecolor", env.get("COLORTERM").?);
+    try std.testing.expectEqualStrings("ghostty", env.get("TERM_PROGRAM").?);
+    try std.testing.expect(env.get("TERM") == null);
+}
+
+test "windows pty command leaves SSH environment untouched" {
+    const allocator = std.testing.allocator;
+    const ssh = try allocCommandLineFromUtf8(allocator, "cmd.exe /c ssh.exe -tt user@example.test");
+    defer freeCommandLine(allocator, ssh);
+
+    var env_map: ?std.process.EnvMap = null;
+    const env_block = try allocTerminalEnvironmentBlock(allocator, commandLineFromOwned(ssh), &env_map, false);
+    try std.testing.expect(env_block == null);
+    try std.testing.expect(env_map == null);
+}
+
+test "windows pty command opts into SSH terminal environment" {
+    const allocator = std.testing.allocator;
+    const ssh = try allocCommandLineFromUtf8(allocator, "cmd.exe /c ssh.exe -tt user@example.test");
+    defer freeCommandLine(allocator, ssh);
+
+    var env_map: ?std.process.EnvMap = null;
+    const env_block = try allocTerminalEnvironmentBlock(allocator, commandLineFromOwned(ssh), &env_map, true);
+    defer if (env_block) |block| allocator.free(block);
+    defer if (env_map) |*map| map.deinit();
+
+    try std.testing.expect(env_block != null);
+    try std.testing.expectEqualStrings("truecolor", env_map.?.get("COLORTERM").?);
+    try std.testing.expectEqualStrings("ghostty", env_map.?.get("TERM_PROGRAM").?);
 }
 
 test "windows pty command applies WSL terminal environment bridge" {

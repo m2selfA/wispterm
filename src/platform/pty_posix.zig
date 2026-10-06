@@ -213,11 +213,11 @@ pub const Pty = struct {
         self.size = s;
     }
 
-    pub fn startCommand(self: *Pty, command: *pty_command.Command, command_line: pty_command.CommandLine, cwd: pty_command.Cwd) !void {
+    pub fn startCommand(self: *Pty, command: *pty_command.Command, command_line: pty_command.CommandLine, cwd: pty_command.Cwd, advertise_terminal_capabilities: bool) !void {
         const pid = std.posix.fork() catch return error.ForkFailed;
         if (pid == 0) {
             // Child: set up the slave as the controlling tty, then exec.
-            childExec(self.master, self.slave_path[0..], self.cancel_pipe, self.size, command_line, cwd);
+            childExec(self.master, self.slave_path[0..], self.cancel_pipe, self.size, command_line, cwd, advertise_terminal_capabilities);
             // childExec never returns; if it somehow does, bail out.
             _exit(127);
         }
@@ -357,6 +357,7 @@ fn childExec(
     size: winsize,
     command_line: pty_command.CommandLine,
     cwd: pty_command.Cwd,
+    advertise_terminal_capabilities: bool,
 ) void {
     // New session so we can claim a controlling terminal.
     _ = c.setsid();
@@ -405,16 +406,19 @@ fn childExec(
     // screen. xterm-256color is the most broadly supported terminfo entry and
     // matches the SGR / cursor-control set our ghostty-vt parser implements.
     _ = setenv("TERM", "xterm-256color", 1);
-    _ = setenv("COLORTERM", "truecolor", 1);
-    // Advertise as Ghostty (whose VT engine we embed) rather than a bespoke
-    // "wispterm". Full-screen TUIs like Claude Code decide whether to enable the
-    // Kitty keyboard protocol purely from a hardcoded TERM_PROGRAM allowlist
-    // (iTerm.app/WezTerm/ghostty/…) — they never probe at runtime. An
-    // unrecognized value means they never push `CSI > 1 u`, so the protocol stays
-    // off and Shift+Enter can't be told apart from Enter (#302's encoder is then
-    // never reached). TERM stays xterm-256color so SSH/ncurses terminfo lookups
-    // keep working even where xterm-ghostty isn't installed.
-    _ = setenv("TERM_PROGRAM", "ghostty", 1);
+    const launch_kind = pty_command.launchKindForCommand(command_line);
+    if (launch_kind != .ssh or advertise_terminal_capabilities) {
+        _ = setenv("COLORTERM", "truecolor", 1);
+        // Advertise as Ghostty (whose VT engine we embed) rather than a bespoke
+        // "wispterm". Full-screen TUIs like Claude Code decide whether to enable the
+        // Kitty keyboard protocol purely from a hardcoded TERM_PROGRAM allowlist
+        // (iTerm.app/WezTerm/ghostty/…) — they never probe at runtime. An
+        // unrecognized value means they never push `CSI > 1 u`, so the protocol stays
+        // off and Shift+Enter can't be told apart from Enter (#302's encoder is then
+        // never reached). TERM stays xterm-256color so SSH/ncurses terminfo lookups
+        // keep working even where xterm-ghostty isn't installed.
+        _ = setenv("TERM_PROGRAM", "ghostty", 1);
+    }
     // Some shells refuse to load completions when TERMINFO points at a value
     // that doesn't exist for our TERM choice. Clearing it lets ncurses fall
     // back to the system database.
@@ -593,7 +597,7 @@ test "spawn child writes output that readOutput receives" {
     var command: pty_command.Command = .{};
     defer command.deinit();
 
-    try pty.startCommand(&command, "/bin/echo wispterm-marker", null);
+    try pty.startCommand(&command, "/bin/echo wispterm-marker", null, false);
 
     var buf: [4096]u8 = undefined;
     var collected: std.ArrayListUnmanaged(u8) = .empty;
@@ -629,7 +633,7 @@ test "child exit surfaces BrokenPipe/EOF and wait reports exit code" {
     // Spawn an interactive shell, then drive it via writeInput (matching the
     // real IO model). The command line is whitespace-split into argv, so we
     // avoid embedded-quote arguments and feed the script over stdin instead.
-    try pty.startCommand(&command, "/bin/sh", null);
+    try pty.startCommand(&command, "/bin/sh", null, false);
     try pty.writeInput("printf hi\nexit 7\n");
 
     var buf: [4096]u8 = undefined;
@@ -670,7 +674,7 @@ test "outputAvailable returns a byte count after child writes" {
     var command: pty_command.Command = .{};
     defer command.deinit();
 
-    try pty.startCommand(&command, "/bin/echo wispterm-avail", null);
+    try pty.startCommand(&command, "/bin/echo wispterm-avail", null, false);
 
     // Wait (bounded) until the kernel reports bytes available on the master.
     var iterations: usize = 0;

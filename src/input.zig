@@ -3229,6 +3229,18 @@ fn terminalSpecialKeySeq(
     return input_shortcuts.kittyKeyEncode(opts, key, mods, buf) orelse legacy;
 }
 
+fn terminalFunctionKeySeq(surface: *Surface, ev: platform_input.KeyEvent, buf: []u8) ?[]const u8 {
+    const ghostty_vt = @import("ghostty-vt");
+    const opts = ghostty_vt.input.KeyEncodeOptions.fromTerminal(&surface.terminal);
+    const mods: ghostty_vt.input.KeyMods = .{
+        .shift = ev.shift,
+        .ctrl = ev.ctrl,
+        .alt = ev.alt,
+        .super = ev.super,
+    };
+    return input_shortcuts.terminalFunctionKeyEncode(opts, ev.key_code, mods, buf);
+}
+
 fn handleKey(ev: platform_input.KeyEvent) void {
     applyInputEffect(dispatchKey(ev));
 }
@@ -3911,11 +3923,22 @@ fn dispatchKey(ev: platform_input.KeyEvent) ui_effect.UiEffect {
     // not for modifier-only keys or key combos that don't produce PTY output.
     var wrote_to_pty = false;
 
-    // Scratch buffer for Kitty keyboard protocol key encoding. Only used by the
-    // Enter/Backspace/Tab arms below; harmless otherwise.
+    // Scratch buffer for terminal special-key encoding.
     var kitty_buf: [128]u8 = undefined;
 
     const seq: ?[]const u8 = switch (ev.key_code) {
+        platform_input.key_f1,
+        platform_input.key_f2,
+        platform_input.key_f3,
+        platform_input.key_f4,
+        platform_input.key_f5,
+        platform_input.key_f6,
+        platform_input.key_f7,
+        platform_input.key_f8,
+        platform_input.key_f9,
+        platform_input.key_f10,
+        platform_input.key_f11,
+        platform_input.key_f12 => terminalFunctionKeySeq(surface, ev, &kitty_buf),
         platform_input.key_enter => terminalSpecialKeySeq(surface, ev, .enter, &kitty_buf, "\r"),
         platform_input.key_backspace => terminalSpecialKeySeq(surface, ev, .backspace, &kitty_buf, "\x7f"),
         platform_input.key_tab => terminalSpecialKeySeq(surface, ev, .tab, &kitty_buf, if (ev.shift) "\x1b[Z" else "\t"),

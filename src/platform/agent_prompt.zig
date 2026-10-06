@@ -65,11 +65,11 @@ const wsl_tool_guidance =
 ;
 
 const common_tools_after_wsl =
-    \\- Use `terminal_repl_exec` for Codex, Claude Code, Python, R, or other REPL/app terminals.
-    \\- Start Codex/Claude Code/REPLs (Python/R/Node) via `terminal_repl_exec repl=plain`; never shell-exec them.
+    \\- Use `terminal_repl_exec` for Codex, Claude Code, Pi, Python, R, or other REPL/app terminals.
+    \\- Start Codex/Claude Code/Pi/REPLs (Python/R/Node) via `terminal_repl_exec repl=plain`; never shell-exec them.
     \\- In line REPLs (Python/R/Node), type raw code as a human would; bare expressions auto-display, so send `1+1`, not print wrappers.
     \\- surface_id accepts `focused`.
-    \\- Do not paste shell commands into Codex or Claude Code; send user text.
+    \\- Do not paste shell commands into Codex, Claude Code, or Pi; send user text.
     \\- A slow session/exec command is usually still running. Do not re-run it. If waiting is better than immediate polling, call `continue_later` with a delay such as 30m and a message that checks `terminal_snapshot` first.
     \\- Do not start long-lived servers or never-exiting processes via the local command tool; launch those in a terminal tab (`tab_new`).
     \\- For a stuck terminal (`>` prompt, unclosed quote, hung command, pager), send `terminal_repl_exec repl=plain code=<ctrl-c>` (or `<ctrl-u>`/`<esc>`/`<ctrl-d>`).
@@ -160,6 +160,14 @@ test "platform agent prompt points at the wispterm_docs tool on every OS" {
     for ([_]std.Target.Os.Tag{ .windows, .linux, .macos }) |os| {
         const p = defaultSystemPromptForOs(os);
         try std.testing.expect(std.mem.indexOf(u8, p, "wispterm_docs") != null);
+    }
+}
+
+test "platform agent prompt teaches Pi terminal routing" {
+    for ([_]std.Target.Os.Tag{ .windows, .linux, .macos }) |os| {
+        const p = defaultSystemPromptForOs(os);
+        try std.testing.expect(std.mem.indexOf(u8, p, "Pi") != null);
+        try std.testing.expect(std.mem.indexOf(u8, p, "terminal_repl_exec repl=plain") != null);
     }
 }
 
