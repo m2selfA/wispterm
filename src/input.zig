@@ -4706,12 +4706,30 @@ fn handleSidebarPress(xpos: f64, ypos: f64) void {
     }
 }
 
-fn viewportCellCodepoint(surface: *Surface, col: usize, row: usize) u21 {
+fn viewportPageCell(surface: *Surface, col: usize, row: usize) ?*@import("ghostty-vt").Cell {
     const cell_data = surface.terminal.screens.active.pages.getCell(.{ .viewport = .{
         .x = @intCast(col),
         .y = @intCast(row),
-    } }) orelse return 0;
-    return @intCast(cell_data.cell.codepoint());
+    } }) orelse return null;
+    return cell_data.cell;
+}
+
+fn viewportCellCodepoint(surface: *Surface, col: usize, row: usize) u21 {
+    const cell = viewportPageCell(surface, col, row) orelse return 0;
+    return @intCast(cell.codepoint());
+}
+
+fn viewportCellIsSpacer(surface: *Surface, col: usize, row: usize) bool {
+    const cell = viewportPageCell(surface, col, row) orelse return false;
+    return switch (cell.wide) {
+        .spacer_tail, .spacer_head => true,
+        else => false,
+    };
+}
+
+fn viewportCellIsSpacerTail(surface: *Surface, col: usize, row: usize) bool {
+    const cell = viewportPageCell(surface, col, row) orelse return false;
+    return cell.wide == .spacer_tail;
 }
 
 fn viewportRowFlags(surface: *Surface, row: usize) struct { wraps_next: bool, continues_from_prev: bool } {
@@ -4742,6 +4760,10 @@ const TerminalTokenGrid = struct {
 
     pub fn codepoint(self: TerminalTokenGrid, row: usize, col: usize) u21 {
         return viewportCellCodepoint(self.surface, col, row);
+    }
+
+    pub fn isSpacer(self: TerminalTokenGrid, row: usize, col: usize) bool {
+        return viewportCellIsSpacer(self.surface, col, row);
     }
 
     pub fn wrapsNext(self: TerminalTokenGrid, row: usize) bool {
@@ -4836,9 +4858,14 @@ fn selectWordAtCell(surface: *Surface, cell_pos: CellPos) bool {
     surface.render_state.mutex.lock();
     defer surface.render_state.mutex.unlock();
 
-    const row = readViewportRowLocked(surface, cell_pos.row, &row_buf);
-    if (cell_pos.col >= row.len) return false;
-    const range = selection_unit.wordRange(row, cell_pos.col) orelse return false;
+    const row_len = readViewportRowLocked(surface, cell_pos.row, &row_buf).len;
+    if (cell_pos.col >= row_len) return false;
+    var spacer_tail: [MAX_SELECTION_COLS]bool = undefined;
+    for (0..row_len) |col| {
+        spacer_tail[col] = viewportCellIsSpacerTail(surface, col, cell_pos.row);
+    }
+    selection_unit.bridgeWideSpacers(row_buf[0..row_len], spacer_tail[0..row_len]);
+    const range = selection_unit.wordRange(row_buf[0..row_len], cell_pos.col) orelse return false;
     const abs_row = viewportOffsetForSurfaceLocked(surface) + cell_pos.row;
     activateSelection(surface, range.start, abs_row, range.end, abs_row);
     return true;
