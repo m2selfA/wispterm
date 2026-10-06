@@ -82,7 +82,7 @@ feishu-app-secret = your-app-secret
 | `http-use-system-proxy`     | `false`    | Enable the AI Proxy setting for model/provider HTTP. Leave off to connect AI requests directly. |
 | `http-proxy`                | *(empty)*  | AI Proxy address used when `http-use-system-proxy` is on. Empty uses the system proxy; otherwise `host:port` or `http://host:port`. |
 | `research-use-proxy`        | `false`    | Enable the independent proxy for `websearch`, `webread`, and PubMed. |
-| `research-proxy`            | *(empty)*  | Empty inherits the AI Proxy value above; enter a value to override it for research tools only. |
+| `research-proxy`            | *(empty)*  | Empty inherits the `http-proxy` address above, including when the AI proxy toggle is off. Enter a value to override it for research tools only. |
 | `ai-agent-enabled`          | `false`    | Enable agent tools for AI Chat profiles by default.                                                                                                                                                                     |
 | `ai-agent-permission`       | `ask`      | Agent tool permission mode: `ask`, `auto`, or `full`.                                                                                                                                                                   |
 | `ai-agent-command-timeout-ms` | `60000`  | Timeout budget for agent shell/SSH commands.                                                                                                                                                                           |

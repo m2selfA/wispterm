@@ -3927,18 +3927,7 @@ fn dispatchKey(ev: platform_input.KeyEvent) ui_effect.UiEffect {
     var kitty_buf: [128]u8 = undefined;
 
     const seq: ?[]const u8 = switch (ev.key_code) {
-        platform_input.key_f1,
-        platform_input.key_f2,
-        platform_input.key_f3,
-        platform_input.key_f4,
-        platform_input.key_f5,
-        platform_input.key_f6,
-        platform_input.key_f7,
-        platform_input.key_f8,
-        platform_input.key_f9,
-        platform_input.key_f10,
-        platform_input.key_f11,
-        platform_input.key_f12 => terminalFunctionKeySeq(surface, ev, &kitty_buf),
+        platform_input.key_f1, platform_input.key_f2, platform_input.key_f3, platform_input.key_f4, platform_input.key_f5, platform_input.key_f6, platform_input.key_f7, platform_input.key_f8, platform_input.key_f9, platform_input.key_f10, platform_input.key_f11, platform_input.key_f12 => terminalFunctionKeySeq(surface, ev, &kitty_buf),
         platform_input.key_enter => terminalSpecialKeySeq(surface, ev, .enter, &kitty_buf, "\r"),
         platform_input.key_backspace => terminalSpecialKeySeq(surface, ev, .backspace, &kitty_buf, "\x7f"),
         platform_input.key_tab => terminalSpecialKeySeq(surface, ev, .tab, &kitty_buf, if (ev.shift) "\x1b[Z" else "\t"),

@@ -319,7 +319,7 @@ theme: ?[]const u8 = null,
 /// proxy. Otherwise `host:port` or `http://host:port`.
 @"http-proxy": []const u8 = "",
 
-/// Enable the independent research-tool proxy. Empty `research-proxy` inherits the AI Proxy setting.
+/// Enable the independent research-tool proxy. An empty `research-proxy` still uses the `http-proxy` address.
 @"research-use-proxy": bool = false,
 
 /// Custom research proxy; empty inherits `http-proxy` when research proxy is enabled.

@@ -450,6 +450,21 @@ test "macOS backend normalizes control-modified shortcut key codes" {
     try std.testing.expectEqual(@as(usize, 0xBF), wispterm_macos_window_test_map_key_code(44, "/"));
 }
 
+test "macOS backend maps F2 to the shared function-key code" {
+    // kVK_F2 is 120. charactersIgnoringModifiers is NSF2FunctionKey (U+F705).
+    const nsf2 = "\u{F705}";
+    try std.testing.expectEqual(
+        @as(usize, platform_input.key_f2),
+        wispterm_macos_window_test_map_key_code(120, nsf2),
+    );
+    try std.testing.expectEqual(
+        @as(usize, platform_input.key_f2),
+        wispterm_macos_window_test_map_key_code(120, null),
+    );
+    try std.testing.expectEqual(@as(usize, platform_input.key_f1), wispterm_macos_window_test_map_key_code(122, null));
+    try std.testing.expectEqual(@as(usize, platform_input.key_f12), wispterm_macos_window_test_map_key_code(111, null));
+}
+
 test "macOS backend maps keypad Enter to normal Enter" {
     // AppKit reports the keypad key as native key code 0x4C and character
     // NSEnterCharacter (U+0003), not the carriage return produced by Return.

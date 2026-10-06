@@ -315,7 +315,7 @@ fn rowDescription(_: settings_page.Category, row: usize) []const u8 {
         settings_page.SETTINGS_SYSTEM_PROXY_ROW => if (zh) "开启后，AI 请求走下一行选择的代理" else "Send AI requests through the proxy chosen below",
         settings_page.SETTINGS_PROXY_ADDRESS_ROW => if (zh) "留空使用系统代理，或填写 127.0.0.1:端口" else "Empty uses the system proxy, or set host:port",
         settings_page.SETTINGS_RESEARCH_PROXY_ROW => if (zh) "开启后，websearch、webread 和 PubMed 使用研究工具代理" else "Send Web Search, Web Read, and PubMed through Research Tools Proxy",
-        settings_page.SETTINGS_RESEARCH_PROXY_ADDRESS_ROW => if (zh) "留空继承上方 AI 代理，或填写独立地址" else "Empty inherits the AI proxy; or set a custom address",
+        settings_page.SETTINGS_RESEARCH_PROXY_ADDRESS_ROW => if (zh) "留空使用上方 AI 代理地址，或填写独立地址" else "Empty uses the AI proxy address above, or set a custom address",
         settings_page.SETTINGS_RAW_CONFIG_ROW => if (zh) "在编辑器中打开完整配置文件" else "Open the complete config file in your editor",
         settings_page.SETTINGS_RESTORE_DEFAULTS_ROW => if (zh) "移除自定义设置并恢复默认值" else "Remove custom settings and restore defaults",
         else => "",

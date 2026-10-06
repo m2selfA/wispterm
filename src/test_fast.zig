@@ -323,6 +323,7 @@ test {
     _ = @import("whats_new_gate.zig");
     _ = @import("startup_tabs.zig");
     _ = @import("config.zig");
+    _ = @import("platform/http_proxy.zig");
     _ = @import("agent/config.zig");
     _ = @import("agent/terminal_lease.zig");
     _ = @import("agent/access.zig");

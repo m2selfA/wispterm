@@ -7231,8 +7231,9 @@ fn researchProxyAddressText(state: *const settings_page.State, configured: []con
         return std.fmt.bufPrint(buf, "{s}|", .{draft}) catch draft;
     }
     if (std.mem.trim(u8, configured, " \t\r\n").len == 0) {
-        _ = base_configured;
-        return if (i18n.lang() == .zh_CN) "继承 AI 代理" else "AI proxy setting";
+        const base = std.mem.trim(u8, base_configured, " \t\r\n");
+        if (base.len == 0) return i18n.s().settings_proxy_system;
+        return base;
     }
     return configured;
 }
