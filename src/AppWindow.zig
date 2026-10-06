@@ -32,6 +32,8 @@ const platform_menu = @import("platform/menu.zig");
 const platform_notifications = @import("platform/notifications.zig");
 const notif_mod = @import("notification.zig");
 const agent_detector = @import("terminal_agents/detector.zig");
+const pi_shutdown_state = @import("terminal_agents/pi_shutdown.zig");
+const close_shortcut_state = @import("ui/close_shortcut_confirm.zig");
 const platform_pty_command = @import("platform/pty_command.zig");
 const copilot_hint_gate = @import("assistant/sidebar/hint_gate.zig");
 const platform_window_state = @import("platform/window_state.zig");
@@ -162,6 +164,7 @@ allocator: std.mem.Allocator,
 app: *App,
 native_handle_bits: std.atomic.Value(usize) = .init(0),
 force_close_requested: std.atomic.Value(bool) = .init(false),
+pi_shutdown: pi_shutdown_state.Coordinator = .{},
 // Recipe staged for this window by App.requestNewWindowWithRecipe; consumed
 // once by the startup branch in runMainLoop.
 initial_recipe_path: [std.fs.max_path_bytes]u8 = undefined,
@@ -363,6 +366,12 @@ pub var g_skill_center_open_file_override: ?*const fn (std.mem.Allocator, platfo
 /// Request this window to exit without showing the interactive close prompt.
 pub fn requestForceClose(self: *AppWindow) void {
     self.force_close_requested.store(true, .release);
+}
+
+/// Request a confirmed window close to ask capable Pi sessions to shut down
+/// gracefully before the PTYs are destroyed.
+pub fn requestGracefulClose() void {
+    close_shortcut_state.requestGracefulClose();
 }
 
 fn consumeForceCloseRequest(self: *AppWindow) bool {
@@ -8357,13 +8366,45 @@ fn runMainLoop(self: *AppWindow) !void {
 
         // Poll platform messages, filling event queues and close state.
         running = window_backend.pollEvents(win) and !g_should_close;
+        if (self.pi_shutdown.isPending() and !g_should_close) {
+            window_backend.clearCloseRequested(win);
+            running = true;
+        }
         if (self.consumeForceCloseRequest()) {
             window_backend.clearCloseRequested(win);
             g_should_close = true;
             running = false;
             continue;
         }
-        if (window_backend.closeRequested(win)) {
+        if (close_shortcut_state.takeGracefulCloseRequest()) {
+            self.pi_shutdown.request();
+        }
+
+        // A confirmed close gives capable Pi sessions a short window to run
+        // `/wispterm-shutdown`; the deadline then falls back to normal PTY teardown.
+        const pi_shutdown_now = std.time.milliTimestamp();
+        if (self.pi_shutdown.hasRequest() and !self.pi_shutdown.isPending()) {
+            const requested = tab.requestPiGracefulShutdown();
+            if (!self.pi_shutdown.begin(pi_shutdown_now, 2500, requested)) {
+                _ = self.pi_shutdown.consumeImmediateClose();
+                g_should_close = true;
+                running = false;
+                continue;
+            }
+        }
+        if (self.pi_shutdown.isPending()) {
+            switch (self.pi_shutdown.tick(pi_shutdown_now, tab.piGracefulShutdownComplete())) {
+                .waiting => {},
+                .ready, .timed_out => {
+                    g_should_close = true;
+                    running = false;
+                    continue;
+                },
+                .idle => unreachable,
+            }
+        }
+
+        if (window_backend.closeRequested(win) and !self.pi_shutdown.isPending()) {
             window_backend.clearCloseRequested(win);
             const running_program = anyTabHasRunningProgram();
             const confirm_for_program = close_confirm.shouldConfirm(g_confirm_close_running_program, running_program);
@@ -8372,8 +8413,7 @@ fn runMainLoop(self: *AppWindow) !void {
                 // Backend tears the window down immediately with no in-app
                 // prompt; closing this window does not necessarily end the app
                 // session (the backend owns process lifecycle).
-                g_should_close = true;
-                running = false;
+                requestGracefulClose();
                 continue;
             }
             const variant: overlays.CloseConfirmVariant = if (confirm_for_program) .running_program else .window_generic;

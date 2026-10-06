@@ -528,6 +528,8 @@ test {
     _ = @import("platform/local_path.zig");
     _ = @import("platform/process_group.zig");
     _ = @import("terminal_agents/detector.zig");
+    _ = @import("terminal_agents/pi_shutdown.zig");
+    _ = @import("session_persist.zig");
     _ = @import("terminal_agents/integration_prompt.zig");
     _ = @import("jupyter/detect.zig");
     _ = @import("jupyter/picker.zig");

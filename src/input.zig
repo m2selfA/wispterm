@@ -3241,6 +3241,18 @@ fn terminalFunctionKeySeq(surface: *Surface, ev: platform_input.KeyEvent, buf: [
     return input_shortcuts.terminalFunctionKeyEncode(opts, ev.key_code, mods, buf);
 }
 
+fn terminalNavigationKeySeq(surface: *Surface, ev: platform_input.KeyEvent, buf: []u8, key_code: platform_input.KeyCode, legacy: []const u8) []const u8 {
+    const ghostty_vt = @import("ghostty-vt");
+    const opts = ghostty_vt.input.KeyEncodeOptions.fromTerminal(&surface.terminal);
+    const mods: ghostty_vt.input.KeyMods = .{
+        .shift = ev.shift,
+        .ctrl = ev.ctrl,
+        .alt = ev.alt,
+        .super = ev.super,
+    };
+    return input_shortcuts.terminalNavigationKeyEncode(opts, key_code, mods, buf) orelse legacy;
+}
+
 fn handleKey(ev: platform_input.KeyEvent) void {
     applyInputEffect(dispatchKey(ev));
 }
@@ -3931,39 +3943,64 @@ fn dispatchKey(ev: platform_input.KeyEvent) ui_effect.UiEffect {
         platform_input.key_enter => terminalSpecialKeySeq(surface, ev, .enter, &kitty_buf, "\r"),
         platform_input.key_backspace => terminalSpecialKeySeq(surface, ev, .backspace, &kitty_buf, "\x7f"),
         platform_input.key_tab => terminalSpecialKeySeq(surface, ev, .tab, &kitty_buf, if (ev.shift) "\x1b[Z" else "\t"),
-        platform_input.key_escape => "\x1b",
+        platform_input.key_escape => terminalNavigationKeySeq(surface, ev, &kitty_buf, platform_input.key_escape, "\x1b"),
         platform_input.key_up, platform_input.key_down, platform_input.key_right, platform_input.key_left => input_shortcuts.terminalArrowSequence(key_event, surface.terminal.modes.get(.cursor_keys)),
-        platform_input.key_home => "\x1b[H",
-        platform_input.key_end => "\x1b[F",
+        platform_input.key_home => terminalNavigationKeySeq(surface, ev, &kitty_buf, platform_input.key_home, "\x1b[H"),
+        platform_input.key_end => terminalNavigationKeySeq(surface, ev, &kitty_buf, platform_input.key_end, "\x1b[F"),
         platform_input.key_page_up => blk: { // Page Up
-            if (ev.shift) {
+            if (ev.shift and surface.terminal.screens.active_key != .alternate) {
                 surface.render_state.mutex.lock();
                 surface.terminal.scrollViewport(.{ .delta = -@as(isize, AppWindow.term_rows / 2) });
                 surface.render_state.mutex.unlock();
                 overlays.scrollbarShow();
                 break :blk null;
             }
-            break :blk "\x1b[5~";
+            break :blk terminalNavigationKeySeq(surface, ev, &kitty_buf, platform_input.key_page_up, "\x1b[5~");
         },
         platform_input.key_page_down => blk: { // Page Down
-            if (ev.shift) {
+            if (ev.shift and surface.terminal.screens.active_key != .alternate) {
                 surface.render_state.mutex.lock();
                 surface.terminal.scrollViewport(.{ .delta = @as(isize, AppWindow.term_rows / 2) });
                 surface.render_state.mutex.unlock();
                 overlays.scrollbarShow();
                 break :blk null;
             }
-            break :blk "\x1b[6~";
+            break :blk terminalNavigationKeySeq(surface, ev, &kitty_buf, platform_input.key_page_down, "\x1b[6~");
         },
-        platform_input.key_insert => "\x1b[2~",
-        platform_input.key_delete => "\x1b[3~",
+        platform_input.key_insert => terminalNavigationKeySeq(surface, ev, &kitty_buf, platform_input.key_insert, "\x1b[2~"),
+        platform_input.key_delete => terminalNavigationKeySeq(surface, ev, &kitty_buf, platform_input.key_delete, "\x1b[3~"),
         else => blk: {
-            // Ctrl+A through Ctrl+Z
-            if (ev.ctrl and ev.key_code >= 0x41 and ev.key_code <= 0x5A) {
-                // Shifted Ctrl+letter chords are application shortcuts above.
-                if (!ev.shift) {
-                    const ctrl_char: u8 = @intCast(ev.key_code - 0x41 + 1);
-                    writeToPty(surface, &[_]u8{ctrl_char});
+            const ascii_code = input_shortcuts.asciiKeyCode(ev.key_code);
+            const is_ascii_key = ascii_code != null;
+            const is_ascii_letter = ev.key_code >= 0x41 and ev.key_code <= 0x5A;
+            const ghostty_vt = @import("ghostty-vt");
+            const opts = ghostty_vt.input.KeyEncodeOptions.fromTerminal(&surface.terminal);
+            const mods: ghostty_vt.input.KeyMods = .{
+                .ctrl = ev.ctrl,
+                .shift = ev.shift,
+                .alt = ev.alt,
+                .super = ev.super,
+            };
+            // Preserve the established Ctrl+A..Z control-byte path.
+            if (ev.ctrl and !ev.shift and !ev.alt and !ev.super and is_ascii_letter) {
+                const ctrl_char: u8 = @intCast(ev.key_code - 0x41 + 1);
+                writeToPty(surface, &[_]u8{ctrl_char});
+                wrote_to_pty = true;
+            } else if (ev.ctrl and !ev.alt and is_ascii_key) {
+                // Kitty/modify-other-keys lets Pi distinguish Ctrl+Shift and
+                // Ctrl+punctuation chords; protocol-off returns null safely.
+                if (input_shortcuts.terminalAsciiKeyEncode(opts, ev.key_code, mods, &kitty_buf)) |s| {
+                    writeToPty(surface, s);
+                    wrote_to_pty = true;
+                }
+            } else if (ev.alt and !ev.ctrl and !ev.super and is_ascii_key) {
+                if (input_shortcuts.terminalAsciiKeyEncode(opts, ev.key_code, mods, &kitty_buf)) |s| {
+                    writeToPty(surface, s);
+                    wrote_to_pty = true;
+                } else if (ascii_code) |code| {
+                    // Legacy fallback for terminals without Kitty/modify-other-keys.
+                    const ch: u8 = if (ev.shift and code >= 'a' and code <= 'z') code - 32 else code;
+                    writeToPty(surface, &[_]u8{ 0x1b, ch });
                     wrote_to_pty = true;
                 }
             }

@@ -472,8 +472,9 @@ language: i18n.LanguageSetting = .auto,
 /// When true, moving the mouse into a split pane focuses it.
 @"focus-follows-mouse": bool = false,
 
-/// When true, persist tab/split layout to the platform config directory on
-/// close, and restore it on next launch (unless CLI args specify otherwise).
+/// When true, persist tab/split layout and replayable Pi session paths to the
+/// platform config directory on close, then restore them on next launch (unless
+/// CLI args specify otherwise).
 /// Default false: the file is neither written nor read when this is off.
 @"restore-tabs-on-startup": bool = false,
 
