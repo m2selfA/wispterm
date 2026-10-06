@@ -18,6 +18,19 @@
 const build_options = @import("build_options");
 const std = @import("std");
 const app_metadata = @import("app_metadata.zig");
+const frame_damage = @import("renderer/frame_damage.zig");
+
+test "frame timing aggregate is included in the fast suite" {
+    var aggregate: @import("appwindow/frame_timing.zig").Aggregate = .{};
+    aggregate.add(.{ .present_block_ns = 1 });
+    try std.testing.expectEqual(@as(u64, 1), aggregate.frames);
+}
+
+test "frame damage collector is included in the fast suite" {
+    var damage: frame_damage.Collector = .{};
+    damage.includeRows(0, 0, 10, 10, 1, 2, 100, 100);
+    try std.testing.expect(damage.finish() != null);
+}
 
 test "App joinAllWindowThreads pumps the macOS main queue (issue 611)" {
     const source = @embedFile("App.zig");

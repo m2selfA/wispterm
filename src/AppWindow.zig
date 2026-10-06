@@ -49,6 +49,8 @@ const copilot_sidebar = @import("appwindow/copilot_sidebar.zig");
 const appwindow_state = @import("appwindow/state.zig");
 const ssh_latency = @import("ssh/latency.zig");
 const render_diagnostics = @import("render_diagnostics.zig");
+const frame_timing = @import("appwindow/frame_timing.zig");
+const frame_damage = @import("renderer/frame_damage.zig");
 const ime_caret = @import("ime_caret.zig");
 const hit_test = @import("input/hit_test.zig");
 pub const ai_chat = @import("assistant/conversation/session.zig");
@@ -1699,9 +1701,18 @@ fn syncBackendSurfaceSize(fb_width: c_int, fb_height: c_int) void {
     }
 }
 
-fn presentBackendFrame(win: *window_backend.Window) void {
+fn includeRendererDamage(collector: *frame_damage.Collector, rend: anytype, origin_x: f32, origin_y: f32, width: c_int, height: c_int) void {
+    const damage = cell_renderer.damageForRenderer(rend);
+    if (!damage.valid or damage.full) {
+        collector.markFull();
+        return;
+    }
+    collector.includeRows(origin_x, origin_y, font.cell_width, font.cell_height, damage.row_start, damage.row_end, width, height);
+}
+
+fn presentBackendFrame(win: *window_backend.Window, damage: ?frame_damage.Rect) void {
     if (comptime gpu.active == .d3d11) {
-        gpu.Context.present() catch |err| {
+        gpu.Context.present(damage) catch |err| {
             render_diagnostics.log("gpu-backend=d3d11 present failed: {s}", .{@errorName(err)});
             std.debug.print("D3D11 present failed: {s}\n", .{@errorName(err)});
         };
@@ -5763,7 +5774,7 @@ fn renderResizeFrame(width: i32, height: i32) void {
         .{ fb_width, fb_height, term_cols, term_rows, gpu.draw_call_count },
     );
     forceOpaqueBackbufferForPresent();
-    if (g_window) |w| presentBackendFrame(w);
+    if (g_window) |w| presentBackendFrame(w, null);
 }
 
 fn resizeWindowToGrid() void {
@@ -8538,6 +8549,17 @@ fn runMainLoop(self: *AppWindow) !void {
         }
         if (blink.due) g_gate_last_blink_render = gate_now;
 
+        frame_timing.beginFrame();
+        var present_damage: frame_damage.Collector = .{};
+        if (signals.force_rebuild or signals.overlay_active or signals.cursor_blink_due or signals.ai_streaming or signals.atlas_sync_pending) {
+            present_damage.markFull();
+        }
+        if (comptime gpu.active == .d3d11) {
+            const frame_gate_stage = frame_timing.beginStage();
+            gpu.Context.waitForFrameSlot();
+            frame_timing.endStage(.frame_gate_wait, frame_gate_stage);
+        }
+
         // In-app GPU benchmark: capture the render-branch start timestamp. The
         // matching frameEnd (after present + dirty-clear) records the sample and
         // feeds the next VT chunk; see driver.zig for the measurement model.
@@ -8553,10 +8575,13 @@ fn runMainLoop(self: *AppWindow) !void {
         overlays.updateFps();
 
         // Sync atlas textures to GPU if modified
+        const atlas_sync_stage = frame_timing.beginStage();
         if (font.g_atlas != null) font.syncAtlasTexture(&font.g_atlas, &font.g_atlas_texture, &font.g_atlas_modified);
         if (font.g_color_atlas != null) font.syncAtlasTexture(&font.g_color_atlas, &font.g_color_atlas_texture, &font.g_color_atlas_modified);
         if (font.g_icon_atlas != null) font.syncAtlasTexture(&font.g_icon_atlas, &font.g_icon_atlas_texture, &font.g_icon_atlas_modified);
         if (font.g_titlebar_atlas != null) font.syncAtlasTexture(&font.g_titlebar_atlas, &font.g_titlebar_atlas_texture, &font.g_titlebar_atlas_modified);
+        frame_timing.endStage(.atlas_sync, atlas_sync_stage);
+        const draw_stage = frame_timing.beginStage();
 
         // Render padding constants - used for content area and titlebar positioning
         const padding: f32 = 10;
@@ -8587,6 +8612,7 @@ fn runMainLoop(self: *AppWindow) !void {
                 // wakeup when the application ends synchronized output (or new
                 // output arrives), and the timeout bounds the watchdog check.
                 window_backend.pumpAppEvents(@as(f64, @floatFromInt(render_gate.MIN_TIMEOUT_MS)) / 1000.0);
+                frame_timing.abortFrame();
                 continue;
             }
 
@@ -8653,6 +8679,7 @@ fn runMainLoop(self: *AppWindow) !void {
                     titlebar.renderSidebar(@floatFromInt(fb_width), @floatFromInt(fb_height), titlebar_offset);
                     file_explorer_renderer.render(@floatFromInt(fb_width), @floatFromInt(fb_height), titlebar_offset);
                     cell_renderer.drawCells(rend, @floatFromInt(fb_height), left_panels_w + @as(f32, @floatFromInt(pad.left)), pad_top);
+                    includeRendererDamage(&present_damage, rend, left_panels_w + @as(f32, @floatFromInt(pad.left)), pad_top, fb_width, fb_height);
                     overlays.renderScrollbar(@floatFromInt(fb_width), @floatFromInt(fb_height), pad_top);
 
                     // Render resize overlay centered in content area (offset for titlebar)
@@ -8709,6 +8736,7 @@ fn runMainLoop(self: *AppWindow) !void {
                                 // Draw cells using the surface's computed padding
                                 const pad = surface.getPadding();
                                 cell_renderer.drawCells(rend, @floatFromInt(rect.height), @floatFromInt(pad.left), @floatFromInt(pad.top));
+                                includeRendererDamage(&present_damage, rend, @floatFromInt(rect.x + @as(i32, @intCast(pad.left))), @floatFromInt(rect.y + @as(i32, @intCast(pad.top))), fb_width, fb_height);
 
                                 // Render scrollbar for this surface within its viewport
                                 overlays.renderScrollbarForSurface(surface, @floatFromInt(rect.width), @floatFromInt(rect.height), @floatFromInt(pad.top));
@@ -8851,8 +8879,12 @@ fn runMainLoop(self: *AppWindow) !void {
         logSwapDiagnosticsIfChanged(win, fb_width, fb_height);
         forceOpaqueBackbufferForPresent();
         gpu.state.endFrame();
+        frame_timing.endStage(.draw, draw_stage);
         agent_requests.capturePendingUiScreenshots(agentRequestHost());
-        presentBackendFrame(win);
+        const present_stage = frame_timing.beginStage();
+        presentBackendFrame(win, present_damage.finish());
+        frame_timing.endStage(.present_block, present_stage);
+        frame_timing.finishFrame();
         handleD3D11RecoveryRequest(allocator, fb_width, fb_height);
         if (windowState().takePresentBringupSettlement()) {
             platform_window_state.settleD3dBringup(allocator);
