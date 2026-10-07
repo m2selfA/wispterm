@@ -251,7 +251,8 @@ pub const Set = struct {
         while (i < self.len) {
             const existing = self.items[i];
             if (existing.action == binding.action or
-                (existing.scope == binding.scope and existing.global == binding.global and existing.trigger.eql(binding.trigger))) {
+                (existing.scope == binding.scope and existing.global == binding.global and existing.trigger.eql(binding.trigger)))
+            {
                 var j = i + 1;
                 while (j < self.len) : (j += 1) {
                     self.items[j - 1] = self.items[j];
