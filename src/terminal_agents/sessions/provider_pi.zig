@@ -74,7 +74,14 @@ pub fn parseMetadata(
 /// (e.g. `20261004T03-51-11Z_abc`). Sessions always carry an id on the first
 /// line; this only covers truncated or hand-made files.
 fn fileStemId(source_path: []const u8) []const u8 {
-    const basename = std.fs.path.basename(source_path);
+    // Session metadata can come from a Windows host while the provider test
+    // or scanner runs on POSIX (and vice versa). Do not use the host-specific
+    // std.fs.path separator set here; Pi paths may contain either separator.
+    var basename_start: usize = 0;
+    for (source_path, 0..) |byte, index| {
+        if (byte == '/' or byte == '\\') basename_start = index + 1;
+    }
+    const basename = source_path[basename_start..];
     return if (std.mem.endsWith(u8, basename, ".jsonl"))
         basename[0 .. basename.len - ".jsonl".len]
     else
@@ -396,6 +403,11 @@ test "ai_history_provider_pi: malformed json is skipped but oom propagates" {
     defer freeTranscript(allocator, messages);
     try std.testing.expectEqual(@as(usize, 1), messages.len);
     try std.testing.expectEqualStrings("Kept", messages[0].content);
+}
+
+test "ai_history_provider_pi: file stem handles host-independent separators" {
+    try std.testing.expectEqualStrings("20261004T03-51-11Z_abc", fileStemId("C:\\pi\\sessions\\20261004T03-51-11Z_abc.jsonl"));
+    try std.testing.expectEqualStrings("20261004T03-51-11Z_abc", fileStemId("/home/pi/sessions/20261004T03-51-11Z_abc.jsonl"));
 }
 
 test "ai_history_provider_pi: missing session id falls back to file stem" {
